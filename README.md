@@ -462,6 +462,11 @@ preserves notices and links to the returned merchant checkout. Products remain
 eligible to appear in discovery even when their store requires merchant checkout.
 Search does not expose a reliable checkout-eligibility filter.
 
+Each cart contains items from one store. Choosing an item from a different store
+asks whether to clear the current cart and switch stores. Cancel keeps the existing
+cart; confirming clears it and adds the selected item. An active checkout or an
+unconfirmed request must be resolved before switching.
+
 Cart quantities can change before payment or merchant handoff, invalidating the
 old checkout review. Opening merchant checkout locks parallel in-app payment and
 cart edits. After declining and closing the merchant page, the explicit
