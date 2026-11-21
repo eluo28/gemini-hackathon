@@ -24,6 +24,12 @@ test('clip validation rejects broken headers, oversized windows, malformed chat 
   assert.equal(parseClipRequest({ ...request, stage: 'probe', resolution: 'high' }).resolution, 'low');
   for (const change of [{ media: 'AAAA' }, { durationSec: 0 }, { durationSec: 80 }, { durationSec: NaN }, { targetSeconds: 90 }, { rules: { ...DEFAULT_RULES, trigger: '' } }, { chat: [{ name: 'A', text: 'hello', offsetSec: 61 }] }, { stage: 'made-up' }]) assert.throws(() => parseClipRequest({ ...request, ...change }));
 });
+
+test('soundboard captures are accepted only for full-context editing', () => {
+  const capture = { id: '12345678-1234-1234-1234-123456789abc', source: 'soundboard', startedAt: 0, roomId: 'room', thresholds: DEFAULT_THRESHOLDS };
+  assert.equal(parseClipRequest({ ...request, capture }).capture?.source, 'soundboard');
+  for (const stage of ['probe', 'instant']) assert.throws(() => parseClipRequest({ ...request, capture, stage }));
+});
 test('one typed Decisions call shares video and aligned chat, preserves scores and redacts inspector media', async () => {
   let calls = 0;
   const judge = createDecisionJudge(async payload => {

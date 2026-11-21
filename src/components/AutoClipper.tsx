@@ -52,7 +52,7 @@ export function LiveClipsPanel({ clipper: c, enabled }: { clipper: Clipper; enab
       <p>{c.autoProbe ? `Checks your live stage every ${c.intervalSec}s. Promising moments become playable clips here.` : 'Turn on Auto-clip below, or use Clip That to capture a moment.'}</p>
       {!enabled && c.autoProbe && <p>Going live sends recorded windows to Gemini for analysis.</p>}
       {c.latest?.selection === 'below-threshold' && <p>The initial trigger was below your threshold.</p>}
-      {trigger !== null && <p className="ac-last-probe">Last check: {Math.round(trigger * 100)}% highlight signal · {Math.round(c.thresholds.trigger * 100)}% to trigger</p>}
+      {trigger !== null && <p className="ac-last-probe">{lastProbe?.result.triggerSource === 'soundboard' ? 'Soundboard event:' : 'Last check:'} {Math.round(trigger * 100)}% highlight signal · {Math.round(c.thresholds.trigger * 100)}% to trigger</p>}
     </div>
     {!c.status && <p className="ac-meta">Checking clipping setup…</p>}
     {c.status && !c.ready && <div className="ac-notice"><strong>Clipping needs setup</strong><p>{!c.status.configured && 'Add GEMINI_API_KEY to .env.local and restart the server. '}{!c.status.mediaReady && 'The server’s media tools are unavailable. Redeploy with FFmpeg and ffprobe dependencies installed. '}Reload after setup.</p></div>}

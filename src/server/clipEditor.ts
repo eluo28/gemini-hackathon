@@ -1,6 +1,6 @@
 import { clipEvent, clipSpan } from './clipTelemetry';
 import { FunctionCallingConfigMode, type Content, type FunctionDeclaration, type GenerateContentResponseUsageMetadata } from '@google/genai';
-import { type AgentInspection, type ClipEdit, type ClipRequest, type ClipResult, type ClipReview, shouldEditClip, probability, DEFAULT_THRESHOLDS } from '../shared/clipping';
+import { type AgentInspection, type ClipEdit, type ClipRequest, type ClipResult, type ClipReview, shouldEditClip, soundboardTrigger, probability, DEFAULT_THRESHOLDS } from '../shared/clipping';
 import { ClipError, createDecisionJudge } from './clipDecisions';
 import { runAgent, sumUsage, videoContext, type AgentOptions } from './clipAgents';
 import { createClipBriefer } from './clipBrief';
@@ -78,7 +78,9 @@ export function createClipAnalyzer(judge = createDecisionJudge(), editor = creat
     const [request, media, durationSec, sourceOffsetSec] = args;
     // "judge" is the existing full-context endpoint stage. The initial probe is
     // now the only selection decision; this stage goes directly to editing.
-    const result: ClipResult = request.stage === 'judge' ? {
+    const result: ClipResult = request.stage === 'judge' && request.capture?.source === 'soundboard' ? {
+      ...soundboardTrigger(durationSec, sourceOffsetSec), media: media.toString('base64'),
+    } : request.stage === 'judge' ? {
       answers: request.trigger || {}, durationSec, sourceOffsetSec,
       trim: { start: 0, end: durationSec }, media: media.toString('base64'),
       inspection: { request: { stage: 'edit', reusedTrigger: !!request.trigger }, response: { answers: request.trigger || {} }, elapsedMs: 0 },

@@ -18,7 +18,7 @@ export function Soundboard({ enabled, busy, playing, error, onPlay, onStop, onCl
     <div className="flex items-start justify-between gap-3">
       <div>
         <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2"><AudioLines className="w-4 h-4" />Soundboard</h2>
-        <p className="text-xs text-slate-500 mt-1">Play a reaction on stream. Automatic detection checks the moment after the sound.</p>
+        <p className="text-xs text-slate-500 mt-1">Play a reaction on stream. Completed sounds trigger a clip at 65%.</p>
       </div>
       <button type="button" onClick={onClose} aria-label="Close soundboard" className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"><X className="w-4 h-4" /></button>
     </div>
@@ -37,7 +37,7 @@ export function Soundboard({ enabled, busy, playing, error, onPlay, onStop, onCl
       </label>
       <button type="button" onClick={onStop} disabled={!playing} className="flex items-center gap-1.5 text-xs font-medium text-slate-600 disabled:opacity-40"><Square className="w-3 h-3" />Stop sound</button>
     </div>
-    <p role="status" className="text-xs text-slate-500">{!enabled ? 'Go live and enable clip detection to use the soundboard.' : playing ? 'Playing to your stream and clip buffer. Mic mute does not mute the soundboard.' : busy ? 'Detection is working. Wait for it to finish before playing another sound.' : 'Ready. Watch the Clips tab for detection scores and saved highlights.'}</p>
+    <p role="status" className="text-xs text-slate-500">{!enabled ? 'Go live and enable clip detection to use the soundboard.' : playing ? 'Playing to your stream and clip buffer. Mic mute does not mute the soundboard.' : busy ? 'Detection is working. Wait for it to finish before playing another sound.' : 'Ready. Play a sound to trigger a highlight in the Clips tab.'}</p>
     {error && <p role="alert" className="text-xs text-rose-700">{error}</p>}
   </section>;
 }

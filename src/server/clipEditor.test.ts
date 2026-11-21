@@ -102,6 +102,20 @@ test('explicit queries bypass the trigger; Hydrogen runs before Neon and its bri
   assert.ok(output.inspection.brief);
 });
 
+test('completed soundboard events exceed 50% and enter editing without an AI trigger score', async () => {
+  let edits = 0;
+  const analyze = createClipAnalyzer(async () => { throw new Error('Soundboard should not call Decisions'); },
+    createClipEditor({ generate: async () => { edits++; return response(); } }), briefer);
+  const output = await analyze({ ...request, capture: {
+    id: 'soundboard', source: 'soundboard', startedAt: 0, roomId: 'room', thresholds: { trigger: 1 },
+  } }, media, 45, 15);
+  assert.equal(output.triggerSource, 'soundboard');
+  assert.deepEqual(output.answers.trigger_detected, { type: 'noul', noul: .65, confidence: 1 });
+  assert.equal(edits, 1);
+  assert.ok(output.inspection.editor);
+  assert.deepEqual(output.inspection.request, { source: 'soundboard', event: 'playback-completed' });
+});
+
 function toolResponse(name: string) {
   const call = { name, id: 'review-1', args: { start: 4, end: 32, reason: 'Check the reaction.' } };
   return { ...response(), functionCalls: [call], candidates: [{ finishReason: FinishReason.STOP, content: { role: 'model', parts: [{ thoughtSignature: 'signature', functionCall: call }] } }] };

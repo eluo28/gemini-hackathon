@@ -63,8 +63,9 @@ under the [Pexels license](https://www.pexels.com/license/).
 Open **Soundboard** in the stream control dock, then go live. Air horn, applause,
 victory, and drum sting play to the stream and its clip buffer, with volume and
 Stop controls. Microphone mute does not mute the soundboard. When a sound finishes,
-the normal automatic detector checks the recording; the initial trigger is the
-only selection gate before editing and saving. Stopping a sound cancels that check.
+it creates a 65% soundboard event trigger and schedules editing and saving.
+This is an explicit playback event, not an AI probability. Stopping a sound
+cancels that trigger.
 The default trigger threshold is 50%, with sound effects and pronounced movement
 explicitly included in the trigger rule. There are no later quality-score gates.
 The browser console includes soundboard playback and detection events.
