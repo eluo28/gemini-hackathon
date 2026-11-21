@@ -1,3 +1,4 @@
+import { hasClipReference } from '../utils/clipShopping';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Pin, Send, Trash2, Users } from 'lucide-react';
 import {
@@ -10,6 +11,7 @@ import type { ChatMessage, ParticipantRole, RoomParticipant } from '../utils/typ
 
 interface LiveChatPanelProps {
   shoppingPanel?: ReactNode;
+  shopDraft?: { id: string; text: string };
   onShopQuestion?: (question: string) => void;
   shopAvailable?: boolean;
   shopConnected?: boolean;
@@ -33,6 +35,7 @@ interface LiveChatPanelProps {
 
 export function LiveChatPanel({
   shoppingPanel,
+  shopDraft,
   onShopQuestion,
   shopAvailable = false,
   shopConnected = false,
@@ -57,6 +60,12 @@ export function LiveChatPanel({
   const [draft, setDraft] = useState('');
   const [shopNotice, setShopNotice] = useState('');
   const [shopOpen, setShopOpen] = useState(false);
+  const composerRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!shopDraft) return;
+    setDraft(shopDraft.text); setPanelView('chat'); setShopOpen(true);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, [shopDraft]);
   const feedEndRef = useRef<HTMLDivElement | null>(null);
   const canModerate = selfRole !== 'viewer';
 
@@ -70,7 +79,8 @@ export function LiveChatPanel({
 
   const isShopCommand = /^@shop(?:\s|$)/i.test(draft.trim());
   const shopQuestion = draft.trim().replace(/^@shop\s*/i, '').trim();
-  const shopBlocked = isShopCommand && shopConnected && (!shopAvailable || shopBusy || !shopQuestion);
+  const isClipQuestion = hasClipReference(shopQuestion);
+  const shopBlocked = isShopCommand && shopConnected && ((!shopAvailable && !isClipQuestion) || shopBusy || !shopQuestion);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -263,12 +273,13 @@ export function LiveChatPanel({
               </p>
             )}
 
-            {isShopCommand && <p role="status" className="text-[11px] text-violet-700">{!shopConnected ? 'Shop isn’t connected. Send to open the connection prompt.' : !shopAvailable ? '@shop is available when a camera or screen share is live.' : shopBusy ? 'Shop is finding matches…' : 'Your @shop message appears in room chat. Product results are visible only to you.'}</p>}
+            {isShopCommand && <p role="status" className="text-[11px] text-violet-700">{!shopConnected ? 'Shop isn’t connected. Send to open the connection prompt.' : !shopAvailable && !isClipQuestion ? 'Ask about a saved clip, or go live to inspect the stream.' : shopBusy ? 'Shop is finding matches…' : 'Your @shop message appears in room chat. Product results are visible only to you.'}</p>}
             <form onSubmit={handleSubmit} className="flex items-center gap-2">
               <label htmlFor="live-chat-input" className="sr-only">
                 Chat message
               </label>
               <input
+                ref={composerRef}
                 id="live-chat-input"
                 type="text"
                 value={draft}

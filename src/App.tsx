@@ -1,3 +1,5 @@
+import { clipShopCommand } from './utils/clipShopping';
+import type { SavedClip } from './shared/clipping';
 import { StreamShopChat, type ShopChatHandle } from './components/StreamShopChat';
 import type { StreamCaptureHandle } from './components/LiveStage';
 import type { StreamerProfile } from './shared/protocol';
@@ -60,6 +62,8 @@ function StudioApp() {
   const captureRef = useRef<StreamCaptureHandle>(null);
   const shopRef = useRef<ShopChatHandle>(null);
   const [streamer, setStreamer] = useState<StreamerProfile | null>(null);
+  const [shopDraft, setShopDraft] = useState<{ id: string; text: string }>();
+  const [selectedShopClipId, setSelectedShopClipId] = useState<string>();
   const [shopConnected, setShopConnected] = useState(false);
   const [excludedShopDomains, setExcludedShopDomains] = useState<string[]>(() => {
     try {
@@ -128,7 +132,13 @@ function StudioApp() {
     }
   };
 
-  if (showMyClips) return <MyClipsPage clipper={clipper} onBack={() => { setShowMyClips(false); window.history.replaceState(null, '', '/'); }} />;
+  const handleShopClip = (clip: SavedClip) => {
+    setSelectedShopClipId(clip.id);
+    setShopDraft({ id: crypto.randomUUID(), text: clipShopCommand(clip) });
+    setShowMyClips(false); setTheaterMode(false);
+  };
+
+  if (showMyClips) return <MyClipsPage clipper={clipper} onShopClip={studio.hasJoined ? handleShopClip : undefined} onBack={() => { setShowMyClips(false); window.history.replaceState(null, '', '/'); }} />;
 
   if (!studio.hasJoined) {
     return (
@@ -248,17 +258,18 @@ function StudioApp() {
           <LiveChatPanel
             key={studio.roomId}
             shopAvailable={studio.isLive && studio.participants.some(p => p.role !== 'viewer' && (p.videoEnabled || p.screenSharing))}
+            shopDraft={shopDraft}
             shopBusy={shopBusy}
             shopConnected={shopConnected}
             onShopQuestion={question => shopRef.current?.ask(question)}
             shoppingPanel={<Suspense fallback={<p className="p-3 text-xs">Opening Shop…</p>}>
               <GiftPanel compact onMerchantCheckoutRequired={excludeMerchantCheckout} onConnectionChange={setShopConnected} roomId={studio.roomId} recipient={currentStreamer?.displayName || 'the streamer'}
-                chat={({ add, busy: purchaseBusy, pending: pendingPurchase, blockedReason, reviewCart }) => <StreamShopChat excludedShopDomains={excludedShopDomains} purchaseBlockReason={blockedReason} onReviewCart={reviewCart} pendingPurchase={pendingPurchase} purchaseBusy={purchaseBusy} compact embedded controllerRef={shopRef} onBusyChange={setShopBusy} isLive={studio.isLive}
+                chat={({ add, busy: purchaseBusy, pending: pendingPurchase, blockedReason, reviewCart }) => <StreamShopChat roomId={studio.roomId} clips={clipper.queue} selectedClipId={selectedShopClipId} excludedShopDomains={excludedShopDomains} purchaseBlockReason={blockedReason} onReviewCart={reviewCart} pendingPurchase={pendingPurchase} purchaseBusy={purchaseBusy} compact embedded controllerRef={shopRef} onBusyChange={setShopBusy} isLive={studio.isLive}
                   sources={studio.participants.filter(p => p.role !== 'viewer' && (p.videoEnabled || p.screenSharing)).map(p => ({ id: p.id, name: p.name }))}
                   capture={sourceId => { if (!captureRef.current) throw new Error('The stream is still connecting.'); return captureRef.current.capture(sourceId); }}
                   canGift={Boolean(currentStreamer?.giftingEnabled)} onGift={product => add(product, 'gift')} onBuy={product => add(product, 'self')} />} />
             </Suspense>}
-            clipsPanel={studio.selfRole !== 'viewer' ? <LiveClipsPanel clipper={clipper} enabled={studio.isLive} /> : undefined}
+            clipsPanel={studio.selfRole !== 'viewer' || clipper.queue.length > 0 ? <LiveClipsPanel onShopClip={handleShopClip} clipper={clipper} enabled={studio.isLive} /> : undefined}
             clipCount={clipper.queue.length}
             messages={studio.chatMessages}
             pinnedMessage={studio.pinnedMessage}
