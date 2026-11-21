@@ -1,3 +1,4 @@
+import { createSoundboard, type SoundboardSound } from '../services/soundboard';
 import type { GiftAlert } from '../shared/gifting';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -258,6 +259,20 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const videoEnabledRef = useRef<boolean>(true);
   const streamStartedAtRef = useRef<number | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const soundboardRef = useRef<ReturnType<typeof createSoundboard> | null>(null);
+  const soundboardSequence = useRef(0);
+  const [soundboardPlaying, setSoundboardPlaying] = useState<SoundboardSound | null>(null);
+  const [soundboardError, setSoundboardError] = useState('');
+  const stopSoundboard = useCallback(() => {
+    soundboardSequence.current++;
+    soundboardRef.current?.stop();
+    setSoundboardPlaying(null);
+  }, []);
+  const disposeSoundboard = useCallback(() => {
+    stopSoundboard();
+    soundboardRef.current?.dispose();
+    soundboardRef.current = null;
+  }, [stopSoundboard]);
   const localMediaPromiseRef = useRef<Promise<MediaStream | null> | null>(null);
   const peersRef = useRef<Map<string, PeerRecord>>(new Map());
   const remoteStreamsMapRef = useRef<Map<string, MediaStream>>(new Map());
@@ -623,9 +638,36 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     [attachLocalTracksToPeer]
   );
 
+  const playSoundboard = useCallback(async (sound: SoundboardSound, volume: number) => {
+    if (!localStreamRef.current || profileRef.current.role === 'viewer') return false;
+    const token = ++soundboardSequence.current;
+    setSoundboardPlaying(sound); setSoundboardError('');
+    try {
+      if (!soundboardRef.current) {
+        const board = createSoundboard(localStreamRef.current);
+        soundboardRef.current = board;
+        localStreamRef.current = board.stream;
+        setLocalStream(board.stream);
+        syncTracksToPeers(board.stream);
+      }
+      if (import.meta.env.DEV) console.debug('[clipping]', { event: 'soundboard.started', sound, volume });
+      const completed = await soundboardRef.current.play(sound, volume);
+      if (import.meta.env.DEV) console.debug('[clipping]', { event: completed ? 'soundboard.completed' : 'soundboard.stopped', sound });
+      return completed && token === soundboardSequence.current;
+    } catch (error) {
+      if (token === soundboardSequence.current) setSoundboardError(error instanceof Error ? error.message : 'Could not play this sound.');
+      return false;
+    } finally {
+      if (token === soundboardSequence.current) setSoundboardPlaying(null);
+    }
+  }, [syncTracksToPeers]);
+
+  useEffect(() => { if (!isLive) stopSoundboard(); }, [isLive, stopSoundboard]);
+
   const startLocalMedia = useCallback(
     async (preferCamera = true, audioDeviceId?: string, videoDeviceId?: string) => {
       const run = async (): Promise<MediaStream | null> => {
+        disposeSoundboard();
         if (profileRef.current.role === 'viewer') {
           if (localStreamRef.current) {
             localStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -725,7 +767,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
             src.connect(analyser);
             const data = new Uint8Array(analyser.frequencyBinCount);
             const tick = () => {
-              if (localStreamRef.current !== stream) return;
+              if (localStreamRef.current !== stream && soundboardRef.current?.inputAudioTracks[0] !== stream.getAudioTracks()[0]) return;
               analyser.getByteFrequencyData(data);
               const avg = data.reduce((a, b) => a + b, 0) / data.length;
               setAudioLevel(Math.min(100, Math.round((avg / 128) * 100)));
@@ -746,7 +788,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
       localMediaPromiseRef.current = promise;
       return promise;
     },
-    [createSyntheticStudioStream, enumerateMediaDevices, syncTracksToPeers]
+    [createSyntheticStudioStream, disposeSoundboard, enumerateMediaDevices, syncTracksToPeers]
   );
 
   const sendWs = useCallback((payload: ClientWsMessage) => {
@@ -1506,6 +1548,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
       peerPlayCursorRef.current.clear();
       wsRef.current?.close();
       closeAllPeersRef.current();
+      disposeSoundboard();
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, [hasJoined]);
@@ -1585,8 +1628,8 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
       !connected ||
       selfRole === 'viewer' ||
       !localStream ||
-      !audioEnabled ||
-      usingSyntheticAudioRef.current ||
+      (!audioEnabled && !soundboardRef.current) ||
+      (usingSyntheticAudioRef.current && !soundboardRef.current) ||
       localStream.getAudioTracks().length === 0
     ) {
       return;
@@ -1699,7 +1742,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     setAudioEnabled((prev) => {
       const next = !prev;
       audioEnabledRef.current = next;
-      localStreamRef.current?.getAudioTracks().forEach((t) => {
+      (soundboardRef.current?.inputAudioTracks || localStreamRef.current?.getAudioTracks() || []).forEach((t) => {
         t.enabled = next;
       });
       sendWs({ type: 'participant:media-state', audioEnabled: next });
@@ -1740,6 +1783,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
         video: true,
         audio: true,
       });
+      disposeSoundboard();
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
       localStreamRef.current = screenStream;
       setLocalStream(screenStream);
@@ -1759,7 +1803,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
         setMediaNotice('Screen sharing was cancelled or blocked by browser permissions.');
       }
     }
-  }, [screenSharing, selectedAudioId, selectedVideoId, sendWs, startLocalMedia, syncTracksToPeers]);
+  }, [disposeSoundboard, screenSharing, selectedAudioId, selectedVideoId, sendWs, startLocalMedia, syncTracksToPeers]);
 
   const toggleGoLive = useCallback(() => {
     if (selfRole === 'viewer') return;
@@ -1800,6 +1844,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     wsRef.current?.close();
     wsRef.current = null;
     closeAllPeers();
+    disposeSoundboard();
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     setLocalStream(null);
@@ -1815,7 +1860,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     setChatMessages([]);
     hasJoinedRef.current = false;
     setHasJoined(false);
-  }, [closeAllPeers, isLive, participants, selfRole, sendWs]);
+  }, [closeAllPeers, disposeSoundboard, isLive, participants, selfRole, sendWs]);
 
   const dismissStreamEndedNotice = useCallback(() => {
     setStreamEndedNotice(null);
@@ -1862,6 +1907,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   );
 
   return {
+    soundboardPlaying, soundboardError, playSoundboard, stopSoundboard,
     hasJoined,
     selfAvatar,
     roomId,

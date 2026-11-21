@@ -10,7 +10,7 @@ const clipDebug = (event: string, fields: Record<string, unknown> = {}) => {
 };
 
 export interface ImportableClip { id: string; runId: string; clipId: number; title: string; start: number; end: number }
-interface Options { active: boolean; roomId: string; localStream: MediaStream | null; remoteStreams: Record<string, MediaStream>; participants: RoomParticipant[]; selfName: string; messages: ChatMessage[] }
+interface Options { soundboardPlaying?: boolean; active: boolean; roomId: string; localStream: MediaStream | null; remoteStreams: Record<string, MediaStream>; participants: RoomParticipant[]; selfName: string; messages: ChatMessage[] }
 export async function toBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(new Error('Could not read recording.')); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.readAsDataURL(blob); });
 }
@@ -45,6 +45,7 @@ export function useAutoClipper(options: Options) {
   const pending = useRef<{ deadline: number; source: string } | null>(null);
   const pendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTrigger = useRef(0);
+  const soundboardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshLibrary = useCallback(async () => {
     try {
       const response = await fetch('/api/clips/library');
@@ -66,6 +67,8 @@ export function useAutoClipper(options: Options) {
     clipDebug('session.cancelled', { generation: generation.current });
     generation.current++; lastTrigger.current = 0; controller.current?.abort(); controller.current = null;
     pending.current = null; if (pendingTimer.current) clearTimeout(pendingTimer.current);
+    if (soundboardTimer.current) clearTimeout(soundboardTimer.current);
+    soundboardTimer.current = null;
     inFlight.current = false; setBusy(false);
   }, []);
   useEffect(() => {
@@ -139,7 +142,7 @@ export function useAutoClipper(options: Options) {
     pendingTimer.current = setTimeout(captureWhenReady, delay);
   }, [run, ready]);
   const probe = useCallback(async () => {
-    if (pending.current || inFlight.current || !recorder.current) return;
+    if (pending.current || inFlight.current || !recorder.current || latestConfig.current.options.soundboardPlaying) return;
     const stage = latestConfig.current.deepJudge ? 'probe' : 'instant';
     const token = generation.current;
     const outcome = await run(stage, 'auto-probe');
@@ -148,6 +151,26 @@ export function useAutoClipper(options: Options) {
       lastTrigger.current = outcome.endedAt; flush('auto-trigger', outcome.endedAt);
     }
   }, [run, flush]);
+  // Check recorded sound with the real detector, preserving its scores and thresholds.
+  const detectSoundboard = useCallback(() => {
+    if (!ready || !recorder.current) return;
+    if (soundboardTimer.current) clearTimeout(soundboardTimer.current);
+    const token = generation.current;
+    const deadline = Date.now() + 10_000;
+    const check = () => {
+      soundboardTimer.current = null;
+      if (token !== generation.current || !recorder.current) return;
+      if (pending.current) return; // An already-triggered full judge includes this moment.
+      if (inFlight.current) {
+        if (Date.now() < deadline) soundboardTimer.current = setTimeout(check, 250);
+        else setError('Detection is still busy. Play the sound again after it finishes.');
+        return;
+      }
+      clipDebug('soundboard.detect');
+      void probe();
+    };
+    soundboardTimer.current = setTimeout(check, 350);
+  }, [probe, ready]);
   useEffect(() => { if (!autoProbe || !recording || !ready) return; const timer = setInterval(() => void probe(), intervalSec * 1000); return () => clearInterval(timer); }, [autoProbe, recording, ready, intervalSec, probe]);
   useEffect(() => {
     registerClipSink({ name: 'gemini-decisions', onClipMarked: ({ marker }) => { if (marker.roomId === latestConfig.current.options.roomId && latestConfig.current.options.active) flush(marker.source); } });
@@ -169,5 +192,5 @@ export function useAutoClipper(options: Options) {
       setImports(old => old.filter(c => c.runId !== entry.runId || c.clipId !== entry.clipId));
     } catch (e) { setError((e as Error).message); }
   };
-  return { query, setQuery, autoProbe, setAutoProbe, includeChat, setIncludeChat, deepJudge, setDeepJudge, intervalSec, setIntervalSec, resolution, setResolution, setRules, rules, thresholds, setThresholds, queue, history, latest, error, setError, phase, bufferedSeconds, recording, busy, status, ready, probe, flush, remove, imports: imports.filter(entry => !queue.some(clip => clip.id === entry.id)), importClip, libraryLoaded };
+  return { query, setQuery, autoProbe, setAutoProbe, includeChat, setIncludeChat, deepJudge, setDeepJudge, intervalSec, setIntervalSec, resolution, setResolution, setRules, rules, thresholds, setThresholds, queue, history, latest, error, setError, phase, bufferedSeconds, recording, busy, status, ready, probe, flush, remove, imports: imports.filter(entry => !queue.some(clip => clip.id === entry.id)), importClip, libraryLoaded, detectSoundboard };
 }

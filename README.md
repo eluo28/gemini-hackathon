@@ -61,6 +61,14 @@ under the [Pexels license](https://www.pexels.com/license/).
    - `http://localhost:3000/?room=main-stage&name=Jordan&role=cohost`
    - `http://localhost:3000/?room=main-stage&name=Sam&role=viewer`
 
+## Stream soundboard
+
+Hosts and co-hosts can open **Soundboard** in the stream control dock in development
+and production. Go live with clip detection enabled to play air horn, applause,
+victory, or drum sting into the stream and clip buffer. Volume and Stop controls
+are included; microphone mute does not mute the soundboard. Completed sounds
+request a normal detection check using the configured clipping thresholds.
+
 ## Local clip telemetry
 
 Run `npm run dev:telemetry` (or `PORT=3001 VITE_HMR_PORT=24679 npm run dev:telemetry` if 3000 is busy).

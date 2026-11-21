@@ -1,7 +1,10 @@
+import { Soundboard } from './Soundboard';
+import type { SoundboardSound } from '../services/soundboard';
 import type { StreamerProfile } from '../shared/protocol';
 import type { GiftAlert } from '../shared/gifting';
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import {
+  AudioLines,
   Mic,
   MicOff,
   MonitorUp,
@@ -37,6 +40,13 @@ import type { PeerRtcState } from '../utils/videoPlayback';
 export interface StreamCaptureHandle { capture: (sourceId: string) => HTMLCanvasElement }
 
 interface LiveStageProps {
+  soundboardEnabled: boolean;
+  soundboardBusy: boolean;
+  soundboardPlaying: SoundboardSound | null;
+  soundboardError: string;
+  onPlaySoundboard: (sound: SoundboardSound, volume: number) => void;
+  onStopSoundboard: () => void;
+
   captureRef?: Ref<StreamCaptureHandle>;
   onProfileChange?: (profile: StreamerProfile | null) => void;
   roomId: string;
@@ -97,6 +107,7 @@ interface LiveStageProps {
 }
 
 export function LiveStage({
+  soundboardEnabled, soundboardBusy, soundboardPlaying, soundboardError, onPlaySoundboard, onStopSoundboard,
   captureRef,
   onProfileChange,
   roomId,
@@ -154,6 +165,7 @@ export function LiveStage({
   const stageGridRef = useRef<HTMLDivElement>(null);
   const [editingMeta, setEditingMeta] = useState(false);
   const [showDevices, setShowDevices] = useState(false);
+  const [showSoundboard, setShowSoundboard] = useState(false);
   const [titleDraft, setTitleDraft] = useState(roomTitle);
   const [categoryDraft, setCategoryDraft] = useState<StreamCategory>(roomCategory);
   const [liveClockSec, setLiveClockSec] = useState(0);
@@ -179,6 +191,7 @@ export function LiveStage({
       if (event.key === 'Escape') {
         setEditingMeta(false);
         setShowDevices(false);
+        setShowSoundboard(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -558,6 +571,11 @@ export function LiveStage({
                   </button>
                 )}
 
+                <button type="button" onClick={() => setShowSoundboard(v => !v)} aria-expanded={showSoundboard} aria-controls="stream-soundboard"
+                  className={`inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-xl border transition-colors ${showSoundboard ? 'bg-slate-900 text-white border-slate-900' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}>
+                  <AudioLines className="w-4 h-4" aria-hidden="true" />Soundboard
+                </button>
+
                 <div
                   aria-hidden="true"
                   className="hidden md:flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200/70"
@@ -584,6 +602,9 @@ export function LiveStage({
                 <span>Clip That</span>
               </button>
             </div>
+
+            {showSoundboard && <Soundboard enabled={soundboardEnabled} busy={soundboardBusy} playing={soundboardPlaying} error={soundboardError}
+              onPlay={onPlaySoundboard} onStop={onStopSoundboard} onClose={() => { onStopSoundboard(); setShowSoundboard(false); }} />}
 
             {showDevices && (audioDevices.length > 0 || videoDevices.length > 0) && (
               <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-4 text-xs">
