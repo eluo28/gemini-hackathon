@@ -136,3 +136,60 @@ export function shouldAttemptIceRestart({
   }
   return nowMs - lastRestartAtMs >= minCooldownMs;
 }
+
+/**
+ * Computes aspect-ratio-preserving dimensions for WebSocket relay frames so portrait
+ * phone cameras (e.g. 720x1280) are never stretched/squished into a fixed 16:9 canvas.
+ */
+export function computeRelayFrameSize(
+  srcWidth: number,
+  srcHeight: number,
+  maxLongEdge = 480
+): { width: number; height: number } {
+  if (!Number.isFinite(srcWidth) || !Number.isFinite(srcHeight) || srcWidth <= 0 || srcHeight <= 0) {
+    return { width: 480, height: 270 };
+  }
+  const scale = Math.min(1, maxLongEdge / Math.max(srcWidth, srcHeight));
+  const even = (n: number) => Math.max(2, Math.round((n * scale) / 2) * 2);
+  return {
+    width: even(srcWidth),
+    height: even(srcHeight),
+  };
+}
+
+/**
+ * Uses object-contain for portrait feeds (phone cameras) and screen shares so they
+ * keep their natural proportions inside 16:9 stage tiles instead of stretching or cropping.
+ */
+export function shouldContainVideoFrame({
+  width,
+  height,
+  isScreenSharing = false,
+}: {
+  width: number;
+  height: number;
+  isScreenSharing?: boolean;
+}): boolean {
+  if (isScreenSharing) return true;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return false;
+  }
+  return height > width;
+}
+
+/**
+ * Builds getUserMedia video constraints matching the device orientation so phones
+ * capture native portrait video instead of requesting awkward landscape crops.
+ */
+export function buildCameraVideoConstraints(
+  videoDeviceId: string | undefined,
+  isPortraitViewport: boolean
+): MediaTrackConstraints {
+  const dims = isPortraitViewport
+    ? { width: { ideal: 720 }, height: { ideal: 1280 } }
+    : { width: { ideal: 1280 }, height: { ideal: 720 } };
+  if (videoDeviceId) {
+    return { deviceId: { exact: videoDeviceId }, ...dims };
+  }
+  return isPortraitViewport ? { facingMode: 'user', ...dims } : dims;
+}

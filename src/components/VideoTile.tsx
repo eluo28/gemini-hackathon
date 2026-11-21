@@ -3,6 +3,7 @@ import { Volume2, VolumeX } from 'lucide-react';
 import { getFallbackAnimalAvatar } from '../utils/streamUtils';
 import {
   getVideoTrackSignature,
+  shouldContainVideoFrame,
   shouldShowRelayOverlay,
   type PeerRtcState,
 } from '../utils/videoPlayback';
@@ -35,6 +36,8 @@ export function ParticipantVideoTile({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [imgFailed, setImgFailed] = useState(false);
   const [hasLiveVideoFrame, setHasLiveVideoFrame] = useState(false);
+  const [videoDims, setVideoDims] = useState<{ width: number; height: number } | null>(null);
+  const [relayDims, setRelayDims] = useState<{ width: number; height: number } | null>(null);
 
   const isVideoActive = participant.videoEnabled || participant.screenSharing;
   const videoTrackSig = getVideoTrackSignature(stream);
@@ -43,11 +46,13 @@ export function ParticipantVideoTile({
   useEffect(() => {
     if (!stream || !isVideoActive || !videoTrackSig) {
       setHasLiveVideoFrame(false);
+      setVideoDims(null);
       return;
     }
     const el = videoRef.current;
     if (el && el.readyState >= 2 && el.videoWidth > 0 && !el.paused) {
       setHasLiveVideoFrame(true);
+      setVideoDims({ width: el.videoWidth, height: el.videoHeight });
     } else {
       setHasLiveVideoFrame(false);
     }
@@ -135,16 +140,38 @@ export function ParticipantVideoTile({
 
   const markFrameLive = () => {
     const el = videoRef.current;
-    if (el && el.videoWidth > 0 && el.readyState >= 2) {
-      setHasLiveVideoFrame(true);
+    if (el && el.videoWidth > 0 && el.videoHeight > 0) {
+      setVideoDims((prev) =>
+        prev && prev.width === el.videoWidth && prev.height === el.videoHeight
+          ? prev
+          : { width: el.videoWidth, height: el.videoHeight }
+      );
+      if (el.readyState >= 2) {
+        setHasLiveVideoFrame(true);
+      }
     }
   };
+
+  const containVideo = shouldContainVideoFrame({
+    width: videoDims?.width ?? 0,
+    height: videoDims?.height ?? 0,
+    isScreenSharing: participant.screenSharing,
+  });
+  const containRelay = shouldContainVideoFrame({
+    width: relayDims?.width ?? 0,
+    height: relayDims?.height ?? 0,
+    isScreenSharing: participant.screenSharing,
+  });
+  const isContainedActive =
+    isVideoActive && (showRelayImage ? containRelay : Boolean(stream && containVideo));
 
   return (
     <div
       data-testid={`video-tile-${participant.id}`}
       data-participant-id={participant.id}
-      className="relative aspect-video rounded-2xl overflow-hidden bg-slate-100 border border-slate-200/90 shadow-xs"
+      className={`relative aspect-video rounded-2xl overflow-hidden border border-slate-200/90 shadow-xs ${
+        isContainedActive ? 'bg-slate-950' : 'bg-slate-100'
+      }`}
     >
       {/* Always-mounted hidden audio element for remote participants */}
       {!isSelf && stream && (
@@ -169,7 +196,7 @@ export function ParticipantVideoTile({
               el.play().catch(() => {});
             }
           }}
-          className="w-full h-full object-cover"
+          className={`w-full h-full ${containVideo ? 'object-contain' : 'object-cover'}`}
         />
       )}
 
@@ -178,7 +205,17 @@ export function ParticipantVideoTile({
           data-live-relay="true"
           src={relayFrame}
           alt={`${participant.name} live stream`}
-          className="absolute inset-0 w-full h-full object-cover"
+          onLoad={(e) => {
+            const img = e.currentTarget;
+            if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+              setRelayDims((prev) =>
+                prev && prev.width === img.naturalWidth && prev.height === img.naturalHeight
+                  ? prev
+                  : { width: img.naturalWidth, height: img.naturalHeight }
+              );
+            }
+          }}
+          className={`absolute inset-0 w-full h-full ${containRelay ? 'object-contain' : 'object-cover'}`}
         />
       ) : !stream || !isVideoActive ? (
         <div className="w-full h-full bg-gradient-to-br from-slate-50 via-white to-slate-100/90 flex items-center justify-center p-4 pb-12">

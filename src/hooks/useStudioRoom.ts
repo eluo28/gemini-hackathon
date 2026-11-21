@@ -29,6 +29,8 @@ import {
   upsertRecentRoomHistory,
 } from '../utils/roomLifecycle';
 import {
+  buildCameraVideoConstraints,
+  computeRelayFrameSize,
   deriveEffectivePeerState,
   getRenegotiationAction,
   isPeerRtcHealthy,
@@ -693,10 +695,10 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
 
         if (preferCamera && navigator.mediaDevices?.getUserMedia) {
           try {
+            const isPortraitViewport =
+              typeof window !== 'undefined' && window.innerHeight > window.innerWidth;
             stream = await navigator.mediaDevices.getUserMedia({
-              video: videoDeviceId
-                ? { deviceId: { exact: videoDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-                : { width: { ideal: 1280 }, height: { ideal: 720 } },
+              video: buildCameraVideoConstraints(videoDeviceId, isPortraitViewport),
               audio: audioDeviceId
                 ? { deviceId: { exact: audioDeviceId }, echoCancellation: true, noiseSuppression: true }
                 : { echoCancellation: true, noiseSuppression: true },
@@ -1618,8 +1620,26 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
           offscreenVideo.play().catch(() => {});
         }
         if (offscreenVideo.readyState >= 2 && offscreenVideo.videoWidth > 0) {
+          const target = computeRelayFrameSize(
+            offscreenVideo.videoWidth,
+            offscreenVideo.videoHeight,
+            480
+          );
+          if (canvas.width !== target.width || canvas.height !== target.height) {
+            canvas.width = target.width;
+            canvas.height = target.height;
+          }
           ctx.drawImage(offscreenVideo, 0, 0, canvas.width, canvas.height);
         } else if (usingSyntheticFeed && synthCanvasRef.current) {
+          const target = computeRelayFrameSize(
+            synthCanvasRef.current.width,
+            synthCanvasRef.current.height,
+            480
+          );
+          if (canvas.width !== target.width || canvas.height !== target.height) {
+            canvas.width = target.width;
+            canvas.height = target.height;
+          }
           ctx.drawImage(synthCanvasRef.current, 0, 0, canvas.width, canvas.height);
         } else {
           return;

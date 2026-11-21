@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildCameraVideoConstraints,
+  computeRelayFrameSize,
   deriveEffectivePeerState,
   getRenegotiationAction,
   isPeerRtcHealthy,
   shouldAttemptIceRestart,
+  shouldContainVideoFrame,
   shouldShowRelayOverlay,
 } from './videoPlayback';
 
@@ -170,4 +173,37 @@ test('shouldAttemptIceRestart deduplicates bursts across ice and connection stat
     }),
     false
   );
+});
+
+test('computeRelayFrameSize preserves portrait phone and landscape webcam aspect ratios', () => {
+  assert.deepEqual(computeRelayFrameSize(720, 1280, 480), { width: 270, height: 480 });
+  assert.deepEqual(computeRelayFrameSize(1280, 720, 480), { width: 480, height: 270 });
+  assert.deepEqual(computeRelayFrameSize(480, 640, 480), { width: 360, height: 480 });
+  assert.deepEqual(computeRelayFrameSize(300, 400, 480), { width: 300, height: 400 });
+  assert.deepEqual(computeRelayFrameSize(0, 0, 480), { width: 480, height: 270 });
+});
+
+test('shouldContainVideoFrame prevents portrait phone feeds and screen shares from spreading out', () => {
+  assert.equal(shouldContainVideoFrame({ width: 720, height: 1280 }), true);
+  assert.equal(shouldContainVideoFrame({ width: 270, height: 480 }), true);
+  assert.equal(shouldContainVideoFrame({ width: 1280, height: 720 }), false);
+  assert.equal(shouldContainVideoFrame({ width: 1280, height: 720, isScreenSharing: true }), true);
+  assert.equal(shouldContainVideoFrame({ width: 0, height: 0 }), false);
+});
+
+test('buildCameraVideoConstraints adapts to portrait phone viewports', () => {
+  assert.deepEqual(buildCameraVideoConstraints(undefined, true), {
+    facingMode: 'user',
+    width: { ideal: 720 },
+    height: { ideal: 1280 },
+  });
+  assert.deepEqual(buildCameraVideoConstraints(undefined, false), {
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+  });
+  assert.deepEqual(buildCameraVideoConstraints('cam-1', true), {
+    deviceId: { exact: 'cam-1' },
+    width: { ideal: 720 },
+    height: { ideal: 1280 },
+  });
 });
