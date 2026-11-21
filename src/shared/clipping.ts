@@ -14,6 +14,7 @@ export const DEFAULT_THRESHOLDS: ClipThresholds = { trigger: .7, worthy: .7, arc
 export interface ClipChat { name: string; text: string; offsetSec: number }
 export interface ClipRequest {
   stage: ClipStage;
+  query?: string;
   capture?: ClipCapture;
   resolution: Resolution;
   media: string;
@@ -23,6 +24,7 @@ export interface ClipRequest {
   rules: ClipRules;
 }
 export interface ClipResult {
+  brief?: ClipBrief;
   edit?: ClipEdit;
   savedClip?: SavedClip;
   selection?: 'saved' | 'below-threshold';
@@ -32,7 +34,25 @@ export interface ClipResult {
   sourceOffsetSec: number;
   trim: { start: number; end: number };
   media?: string;
-  inspection: { request: unknown; response: Decisions.CreateDecisionResponse; elapsedMs: number; editor?: { request: unknown; response: unknown; elapsedMs: number } };
+  inspection: { request: unknown; response: Decisions.CreateDecisionResponse; elapsedMs: number; brief?: AgentInspection; editor?: AgentInspection };
+}
+export interface AgentInspection { request: unknown; response: unknown; elapsedMs: number; steps?: { agent: 'neon' | 'hydrogen-review'; inspection: AgentInspection }[] }
+export interface ClipBrief {
+  summary: string;
+  intent: string;
+  relevant: boolean;
+  beats: { start: number; end: number; description: string }[];
+  model: string;
+  usage?: GenerateContentResponseUsageMetadata;
+}
+export interface ClipReview {
+  start: number;
+  end: number;
+  reason: string;
+  approved: boolean;
+  feedback: string;
+  model: string;
+  usage?: GenerateContentResponseUsageMetadata;
 }
 export interface ClipEdit {
   start: number;
@@ -40,6 +60,11 @@ export interface ClipEdit {
   reason: string;
   model: string;
   usage?: GenerateContentResponseUsageMetadata;
+  reviews?: ClipReview[];
+}
+export function shouldEditClip(request: ClipRequest, answers: ClipAnswers) {
+  return request.stage !== 'probe' && (!!request.query?.trim() || !request.capture ||
+    ['manual', 'voice', 'manual-flush'].includes(request.capture.source) || qualifies(answers, request.capture.thresholds));
 }
 export function probability(answers: ClipAnswers, key: string): number | null {
   const answer = answers[key];
@@ -53,16 +78,6 @@ export function qualifies(answers: ClipAnswers, thresholds: ClipThresholds): boo
     return value !== null && value >= thresholds[key];
   });
 }
-export function trimBounds(answers: ClipAnswers, duration: number) {
-  const peakAnswer = answers.peak_position;
-  const lengthAnswer = answers.best_clip_duration;
-  const peak = peakAnswer?.type === 'choice' ? Number(peakAnswer.choice.replace('p', '')) / 100 : .5;
-  const requested = lengthAnswer?.type === 'choice' ? Number(lengthAnswer.choice.replace('s', '')) : duration;
-  const length = Math.min(duration, Number.isFinite(requested) && requested > 0 ? requested : duration);
-  const center = (Number.isFinite(peak) ? peak : .5) * duration;
-  const start = Math.max(0, Math.min(duration - length, center - length * .65));
-  return { start, end: Math.min(duration, start + length) };
-}
 
 export interface ClipCapture {
   id: string;
@@ -72,6 +87,8 @@ export interface ClipCapture {
   thresholds: ClipThresholds;
 }
 export interface SavedClip {
+  query?: string;
+  brief?: ClipBrief;
   edit?: ClipEdit;
   id: string;
   capturedAt: number;

@@ -1,3 +1,4 @@
+import { clipEvent, clipErrorDetails, clipSpan } from './clipTelemetry';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
@@ -84,21 +85,23 @@ export async function normalizeMedia(bytes: Buffer, duration: number, window: { 
     // container makes it seekable without encoding a minute of live video again.
     // Actual cuts still re-encode so their boundaries do not depend on keyframes.
     const wholeRecording = window.tail !== undefined && window.tail >= duration && duration <= 60;
-    await exec(ffmpegBin, [
+    await clipSpan('ffmpeg', { inputBytes: bytes.length, durationSec: duration, start, length, mode: wholeRecording ? 'remux' : 'encode' }, () => exec(ffmpegBin, [
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-protocol_whitelist', 'file,pipe', '-i', input,
       '-ss', String(start), '-t', String(length), '-map', '0:v:0', '-map', '0:a:0?',
       ...(wholeRecording ? ['-c', 'copy'] : [
       '-vf', 'scale=960:540:force_original_aspect_ratio=decrease:force_divisible_by=2',
       '-r', '20', '-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '1000k',
       '-c:a', 'libopus', '-b:a', '64k', '-threads', '2']), '-y', output,
-    ], { timeout: 45_000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 });
+    ], { timeout: 45_000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 }));
     const media = await readFile(output);
     if (media.length > MAX_MEDIA_BYTES) throw new ClipError('Encoded clip exceeds 16 MB.');
-    const { stdout } = await exec(ffprobeBin, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', output], { timeout: 5000 });
+    const { stdout } = await clipSpan('ffprobe', {}, () => exec(ffprobeBin, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', output], { timeout: 5000 }));
     const actual = Number(JSON.parse(stdout).format?.duration);
     if (!Number.isFinite(actual) || actual < .1 || actual > 61) throw new ClipError('Recording contained no usable video.');
+    clipEvent('media.ready', { outputBytes: media.length, durationSec: actual, sourceOffsetSec: start });
     return { media, durationSec: actual, sourceOffsetSec: start };
   } catch (error) {
+    clipEvent('media.failed', { error: clipErrorDetails(error) }, 'error');
     if (error instanceof ClipError) throw error;
     const execErr = error as NodeJS.ErrnoException & { stderr?: string };
     if (execErr.code === 'ENOENT') throw new ClipError('Install ffmpeg and ffprobe locally to prepare playable clips.', 503);

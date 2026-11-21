@@ -65,8 +65,8 @@ test('automatic qualifying cuts and manual low-score captures save directly; pro
   const cookie = setCookie.split(';')[0];
   const request = { stage: 'judge', resolution: 'medium', durationSec: 60, targetSeconds: 60, media: media.toString('base64'), chat: [], rules: DEFAULT_RULES, capture: { id: crypto.randomUUID(), roomId: 'test', source: 'auto-trigger', startedAt: 1000, thresholds: DEFAULT_THRESHOLDS } };
   assert.throws(() => parseClipRequest({ ...request, capture: { ...request.capture, thresholds: { ...DEFAULT_THRESHOLDS, worthy: -1 } } }));
-  const post = async (source: string, stage = 'judge') => {
-    const response = await fetch(`${base}/analyze`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ ...request, stage, capture: { ...request.capture, id: crypto.randomUUID(), source } }) });
+  const post = async (source: string, stage = 'judge', query?: string) => {
+    const response = await fetch(`${base}/analyze`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ ...request, stage, ...(query ? { query } : {}), capture: { ...request.capture, id: crypto.randomUUID(), source } }) });
     assert.equal(response.status, 200); return response.json();
   };
   assert.equal((await post('auto-trigger')).selection, 'below-threshold');
@@ -75,12 +75,15 @@ test('automatic qualifying cuts and manual low-score captures save directly; pro
   assert.equal(manual.savedClip.durationSec, 10);
   assert.deepEqual(windows.at(-1), { start: 20, end: 30 });
   assert.equal((await post('voice')).selection, 'saved');
+  const requested = await post('auto-trigger', 'judge', 'the failed comeback');
+  assert.equal(requested.selection, 'saved');
+  assert.equal(requested.savedClip.query, 'the failed comeback');
   positive = true;
   assert.equal((await post('auto-trigger')).selection, 'saved');
   assert.equal((await post('auto-probe', 'instant')).selection, 'saved');
   assert.equal((await post('auto-probe', 'probe')).savedClip, undefined);
   const list = await (await fetch(`${base}/library`, { headers: { Cookie: cookie } })).json();
-  assert.equal(list.clips.length, 4);
+  assert.equal(list.clips.length, 5);
   const fileUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}${manual.savedClip.url}`;
   const range = await fetch(fileUrl, { headers: { Cookie: cookie, Range: 'bytes=0-3' } });
   assert.equal(range.status, 206); assert.equal(Buffer.from(await range.arrayBuffer()).toString('hex'), '1a45dfa3');

@@ -1,18 +1,21 @@
+import { clipEvent, clipErrorDetails, clipRequestTrace, clipSpan } from './clipTelemetry';
 import express from 'express';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { readFile, readdir } from 'node:fs/promises';
 import { ClipLibrary, clipOwner } from './clipLibrary';
-import { qualifies } from '../shared/clipping';
+import { shouldEditClip } from '../shared/clipping';
 import { ClipError, decodeWebm, parseClipRequest } from './clipDecisions';
 import { clipEditorModel, createClipAnalyzer } from './clipEditor';
+import { clipBriefModel, clipReviewModel, GeminiModelConfigError } from './geminiModels';
 import { mediaAvailable, normalizeMedia } from './clipMedia';
 
 export function createClipRouter(judge = createClipAnalyzer(), normalize = normalizeMedia, library = new ClipLibrary()) {
   const router = express.Router();
+  router.use(clipRequestTrace);
   let active = 0;
   const buckets = new Map<string, { since: number; count: number }>();
-  router.get('/status', async (_req, res) => res.json({ configured: !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY', mediaReady: await mediaAvailable(), model: 'gemini-decision-1', editorModel: clipEditorModel() }));
+  router.get('/status', async (_req, res) => { try { res.json({ configured: !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY', mediaReady: await mediaAvailable(), model: 'gemini-decision-1', editorModel: clipEditorModel(), briefModel: clipBriefModel(), reviewModel: clipReviewModel() }); } catch (e) { respondError(res, e); } });
   router.use((req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     const origin = req.get('origin');
@@ -28,7 +31,7 @@ export function createClipRouter(judge = createClipAnalyzer(), normalize = norma
     for (const [key, bucket] of buckets) if (now - bucket.since >= 60_000) buckets.delete(key);
     const ip = req.ip || 'local';
     const bucket = buckets.get(ip) || { since: now, count: 0 };
-    if (active >= 2 || bucket.count >= 15 || (!buckets.has(ip) && buckets.size >= 1000)) { res.setHeader('Retry-After', '60'); res.status(429).json({ error: 'Clip processing is busy. Wait a minute and retry.' }); return; }
+    if (active >= 2 || bucket.count >= 15 || (!buckets.has(ip) && buckets.size >= 1000)) { clipEvent('request.rejected', { reason: 'capacity-or-rate-limit', active, requestsInWindow: bucket.count }, 'warn'); res.setHeader('Retry-After', '60'); res.status(429).json({ error: 'Clip processing is busy. Wait a minute and retry.' }); return; }
     bucket.count++; buckets.set(ip, bucket);
     next();
   });
@@ -38,18 +41,19 @@ export function createClipRouter(judge = createClipAnalyzer(), normalize = norma
     active++;
     try {
       const request = parseClipRequest(req.body);
-      const normalized = await normalize(decodeWebm(request.media), request.durationSec, { tail: request.stage === 'judge' ? request.targetSeconds : 15 });
-      const result=await judge(request, normalized.media, normalized.durationSec, normalized.sourceOffsetSec);
+      clipEvent('analysis.accepted', { captureId: request.capture?.id, source: request.capture?.source, stage: request.stage, durationSec: request.durationSec, resolution: request.resolution, hasQuery: !!request.query, chatMessages: request.chat.length, active });
+      const normalized = await clipSpan('media.normalize', {}, () => normalize(decodeWebm(request.media), request.durationSec, { tail: request.stage === 'judge' ? request.targetSeconds : 15 }));
+      const result=await clipSpan('analysis', {}, () => judge(request, normalized.media, normalized.durationSec, normalized.sourceOffsetSec));
       if(request.capture && request.stage !== 'probe') {
         const c=request.capture;
-        const manual=['manual','voice','manual-flush'].includes(c.source);
-        if(manual || qualifies(result.answers,c.thresholds)) {
-          const trimmed=await normalize(normalized.media,normalized.durationSec,result.trim);
-          result.savedClip=await library.save(clipOwner(req,res),{id:c.id,capturedAt:Date.now(),roomId:c.roomId,source:c.source,startedAt:c.startedAt+normalized.sourceOffsetSec*1000,durationSec:trimmed.durationSec,originalDurationSec:normalized.durationSec,trim:result.trim,edit:result.edit,answers:result.answers,usage:result.usage},trimmed.media);
+        if(shouldEditClip(request,result.answers)) {
+          const trimmed=await clipSpan('media.trim', { trim: result.trim }, () => normalize(normalized.media,normalized.durationSec,result.trim));
+          result.savedClip=await clipSpan('library.save', { captureId: c.id }, () => library.save(clipOwner(req,res),{id:c.id,capturedAt:Date.now(),roomId:c.roomId,source:c.source,startedAt:c.startedAt+normalized.sourceOffsetSec*1000,durationSec:trimmed.durationSec,originalDurationSec:normalized.durationSec,trim:result.trim,query:request.query,brief:result.brief,edit:result.edit,answers:result.answers,usage:result.usage},trimmed.media));
           result.selection='saved';
         } else result.selection='below-threshold';
         delete result.media;
       }
+      clipEvent('analysis.result', { selection: result.selection || (request.stage === 'probe' ? 'probe-only' : 'analyzed'), savedClipId: result.savedClip?.id, trim: result.trim, usage: result.usage });
       res.json(result);
     } catch (e) { respondError(res, e); } finally { active--; }
   });
@@ -65,7 +69,7 @@ export function createClipRouter(judge = createClipAnalyzer(), normalize = norma
       if(!candidate?.result?.answers)throw new ClipError('Saved analysis is missing its scores.');
       const bytes=await readFile(path.join(importRoot,runId,clip.webm));
       const id=offlineClipId(runId,clipId);
-      const saved=await library.save(clipOwner(req,res),{id,capturedAt:Date.now(),roomId:'imported-video',source:report.sourceName,startedAt:0,durationSec:clip.end-clip.start,originalDurationSec:report.duration,trim:{start:clip.start,end:clip.end},edit:candidate.result.edit,answers:candidate.result.answers,usage:candidate.result.usage},bytes);
+      const saved=await library.save(clipOwner(req,res),{id,capturedAt:Date.now(),roomId:'imported-video',source:report.sourceName,startedAt:0,durationSec:clip.end-clip.start,originalDurationSec:report.duration,trim:{start:clip.start,end:clip.end},brief:candidate.result.brief,edit:candidate.result.edit,answers:candidate.result.answers,usage:candidate.result.usage},bytes);
       res.json({clip:saved});
     }catch(e){respondError(res,e);}finally{active--;}
   });
@@ -81,12 +85,14 @@ export function createClipRouter(judge = createClipAnalyzer(), normalize = norma
     } catch (e) { respondError(res, e); } finally { active--; }
   });
   router.use((error: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    clipEvent('request.failed', { error: clipErrorDetails(error) }, 'error');
     res.status(error.type === 'entity.too.large' ? 413 : 400).json({ error: 'Invalid clip request or recording larger than 16 MB.' });
   });
   return router;
 }
 function respondError(res: express.Response, error: unknown) {
-  res.status(error instanceof ClipError ? error.status : 500).json({ error: error instanceof ClipError ? error.message : 'Clip processing failed.' });
+  clipEvent('request.failed', { error: clipErrorDetails(error) }, 'error');
+  res.status(error instanceof ClipError || error instanceof GeminiModelConfigError ? error.status : 500).json({ error: error instanceof ClipError || error instanceof GeminiModelConfigError ? error.message : 'Clip processing failed.' });
 }
 
 function offlineClipId(runId:string,clipId:number){return crypto.createHash('sha256').update(`${runId}:${clipId}`).digest('hex').slice(0,32).replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/,'$1-$2-$3-$4-$5');}

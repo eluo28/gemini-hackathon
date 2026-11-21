@@ -61,6 +61,34 @@ under the [Pexels license](https://www.pexels.com/license/).
    - `http://localhost:3000/?room=main-stage&name=Jordan&role=cohost`
    - `http://localhost:3000/?room=main-stage&name=Sam&role=viewer`
 
+## Local clip telemetry
+
+Run `npm run dev:telemetry` (or `PORT=3001 VITE_HMR_PORT=24679 npm run dev:telemetry` if 3000 is busy).
+Follow the trace file in another terminal:
+
+```bash
+tail -f .data/telemetry/clips.jsonl
+# Filter one browser request or capture:
+rg 'YOUR_TRACE_ID' .data/telemetry/clips.jsonl
+```
+
+Traces cover request admission, normalization, Gemini Decisions, briefing, editor
+turns/reviews, trim/render, and library saves. Every stage reports
+start, elapsed time, success/failure, and a heartbeat every 10 seconds while waiting.
+Decision scores, thresholds, model names, token usage, tool names/cut bounds, provider
+errors, and FFmpeg stderr explain slow calls, rejected cuts, and failed generation.
+`traceId` correlates a request; `spanId` / `parentSpanId` link nested work. The response's `X-Request-ID` matches the trace. Development
+browser consoles show `[clipping]` events (enable **Verbose**), including skipped
+captures, post-roll, and request IDs. Browser-only events stay in the browser console.
+
+For an offline scan, use
+`CLIP_TELEMETRY=1 npx tsx scripts/clip-video.ts "path/to/video.webm"`.
+Each analysis window includes its run ID and source timestamps. Override the file
+with `CLIP_TELEMETRY_FILE`; logs append across runs, with timestamps and process IDs.
+Telemetry is opt-in and local; there is no external collector. It omits media,
+prompts, chat, and credentials, and redacts the API key from captured error text.
+Delete the gitignored log when finished; it does not rotate automatically.
+
 ## Architecture & Contracts
 
 - `server.ts`: Express + `ws` signaling server with typed protocol frames, `/api/health`, `/api/rooms`, per-socket sliding-window rate limits, payload caps, avatar URL validation, empty-room garbage collection, and graceful shutdown.
@@ -122,7 +150,7 @@ be implemented. There is no payment endpoint in this change.
 
 `POST /api/shop/detect-items` analyzes one to three compressed frames from a live
 stream or clip. Configure `GEMINI_API_KEY` in server secrets; optionally override
-`GEMINI_ITEM_MODEL` (default `gemini-3.8-flash`). Missing credentials return a clear
+`GEMINI_ITEM_MODEL` (default `gemini-4-hydrogen`; Gemini 4 overrides only). Missing credentials return a clear
 503 without preventing the rest of the app from starting.
 
 Request shape: `{ "frames": [{ "mimeType": "image/jpeg", "data": "<base64 image bytes, without data-URL prefix>", "timestampSec": 12.5 }] }`.
@@ -230,28 +258,49 @@ Thresholds apply to future automatic captures. Existing saved clips remain saved
 Automatic selection uses four checks:
 clip-worthiness, complete arc, sharing potential, and hook strength.
 
-Gemini Decisions supplies scores and an initial peak/duration hint. For selected
-captures, a Gemini tool-calling editor watches the normalized video with audio and
-chooses exact numeric start/end seconds via `trim_clip`, preserving setup, payoff,
-and reaction. Express validates the bounds before FFmpeg renders and saves the cut.
-Manual/voice captures bypass quality thresholds and still use the editor; probes
-and rejected automatic captures do not call it. Invalid or failed edits never
-fall back to heuristic cuts. Boundary quality depends on model interpretation;
-this is not a guarantee of frame-level event detection.
+The clipping pipeline separates annotation, understanding, and editing:
 
-The editor uses the same **`GEMINI_API_KEY`**, with `GEMINI_CLIP_EDITOR_MODEL`
-defaulting to `gemini-3.8-flash`. No Vertex AI Agent Engine deployment or Cloud
-credentials are required: Google hosts inference, while this app executes the
-editing tool and renders locally. The editor uses the Gemini Developer API's
-[function calling](https://ai.google.dev/gemini-api/docs/function-calling) and
-[video understanding](https://ai.google.dev/gemini-api/docs/video-understanding).
-It makes one additional call per selected capture, with a 45-second timeout and
-no automatic retries. Editing generates output tokens, tracked separately in
-`edit.usage`; the zero-output-token requirement applies only to Decisions scoring.
-The API inspector includes the editor exchange with video bytes omitted, and
-saved clips retain the model, edit reason, and usage. Offline video/eval runs use
-the same editor for judge candidates (including review-only suggestions); their
-total usage includes editing tokens. Existing rendered imports are not re-edited.
+- **Decisions** supplies structured categories and quality scores. It does not select
+  peaks, durations, or edit boundaries. Probes stop after annotation, and automatic
+  candidates below the configured thresholds skip all editing agents.
+- **Hydrogen** (`gemini-4-hydrogen`) watches the normalized source video and audio,
+  interprets an optional `query`, and returns a validated editing brief: summary,
+  intent, query relevance, and timestamped story beats.
+- **Neon** (`gemini-4-neon`) receives the source footage, aligned chat, annotations,
+  and brief. It chooses exact numeric start/end seconds using `trim_clip`.
+  It can delegate `review_cut` to a Hydrogen specialist to check narrative and
+  boundary quality, then refine its edit from the feedback. The server permits
+  at most two reviews and three Neon turns, preserves tool-call thought signatures,
+  validates every proposed cut, and renders the final contiguous cut with FFmpeg.
+
+In Clipping studio → Controls, **What should this clip be about?** supplies the
+query for manual and voice captures. API clients can send a `query` string of
+1–2,000 characters to `/api/clips/analyze`. Manual captures and explicit queries
+bypass generic quality thresholds; a requested event absent from the footage
+returns 422 instead of saving an unrelated clip. Automatic probes do not use the
+manual-query field. Query, brief, edit rationale, and delegated reviews persist
+with saved clips. Invalid or failed agent responses never fall back to heuristic
+cuts. The renderer currently supports one contiguous cut, not generative video
+changes, captions, or montages.
+
+All analysis/editing agents use **`GEMINI_API_KEY`**. Model defaults can be changed
+through `GEMINI_CLIP_BRIEF_MODEL`, `GEMINI_CLIP_EDITOR_MODEL`, and
+`GEMINI_CLIP_REVIEW_MODEL`; these and `GEMINI_ITEM_MODEL` accept only Gemini 4 model
+IDs, with no Flash fallback. The separate Clip Gen character-swap feature keeps
+its existing Omni video generator and configuration.
+Model IDs and capabilities are documented in the
+[Google model catalog](https://aistudio.google.com/docs/models) and
+[Neon model reference](https://aistudio.google.com/docs/models/gemini-4-neon).
+
+Each inference call has a 45-second timeout and no automatic retries. A selected
+capture normally makes one Hydrogen and one Neon call after Decisions, with up to
+four additional calls when Neon requests both reviews. Browser requests allow
+seven minutes for the bounded workflow plus media processing. There is no durable
+agent job queue; restarting the server interrupts in-flight work.
+The inspector includes every agent exchange with video bytes omitted. Brief usage
+is tracked in `brief.usage`, total Neon usage in `edit.usage`, and specialist usage
+in `edit.reviews[].usage`; offline reports include all three. The zero-output-token
+requirement applies only to Decisions scoring.
 
 Finished files and metadata live in `.data/clips` (override with `CLIP_DATA_DIR`).
 An opaque HttpOnly SameSite cookie identifies this browser's library; clearing

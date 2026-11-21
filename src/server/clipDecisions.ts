@@ -1,5 +1,6 @@
+import { clipEvent, clipSpan } from './clipTelemetry';
 import { GoogleGenAI, type Decisions } from '@google/genai';
-import { DEFAULT_RULES, DEFAULT_THRESHOLDS, trimBounds, type ClipRequest, type ClipResult } from '../shared/clipping';
+import { DEFAULT_RULES, DEFAULT_THRESHOLDS, type ClipRequest, type ClipResult } from '../shared/clipping';
 
 export class ClipError extends Error {
   constructor(message: string, public status = 400) { super(message); }
@@ -8,6 +9,7 @@ export const MAX_MEDIA_BYTES = 16 * 1024 * 1024;
 export function parseClipRequest(value: unknown): ClipRequest {
   const v = value as ClipRequest;
   if (!v || !['probe', 'judge', 'instant'].includes(v.stage) || !['low', 'medium', 'high'].includes(v.resolution)) throw new ClipError('Invalid analysis stage or resolution.');
+  if (v.query !== undefined && (typeof v.query !== 'string' || !v.query.trim() || v.query.length > 2000)) throw new ClipError('The clip request must contain 1–2,000 characters.');
   if (!Number.isFinite(v.durationSec) || v.durationSec < 1 || v.durationSec > 65 || !Number.isFinite(v.targetSeconds) || v.targetSeconds < 1 || v.targetSeconds > 60) throw new ClipError('Clip duration must be between 1 and 60 seconds.');
   decodeWebm(v.media);
   if (!v.rules || (Object.keys(DEFAULT_RULES) as (keyof typeof DEFAULT_RULES)[]).some(key => typeof v.rules[key] !== 'string' || !v.rules[key].trim() || v.rules[key].length > 2000)) throw new ClipError('Each rule must contain 1–2,000 characters.');
@@ -16,7 +18,7 @@ export function parseClipRequest(value: unknown): ClipRequest {
     const c = v.capture;
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(c.id) || typeof c.roomId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(c.roomId) || !['manual','voice','manual-flush','auto-trigger','auto-probe'].includes(c.source) || !Number.isFinite(c.startedAt) || c.startedAt < 0 || !c.thresholds || (Object.keys(DEFAULT_THRESHOLDS) as (keyof typeof DEFAULT_THRESHOLDS)[]).some(k => !Number.isFinite(c.thresholds[k]) || c.thresholds[k] < 0 || c.thresholds[k] > 1)) throw new ClipError('Invalid clip capture metadata.');
   }
-  return { ...v, resolution: v.stage === 'judge' ? v.resolution : 'low' };
+  return { ...v, ...(v.query ? { query: v.query.trim() } : {}), resolution: v.stage === 'judge' ? v.resolution : 'low' };
 }
 export function decodeWebm(data: unknown) {
   if (typeof data !== 'string' || data.length > Math.ceil(MAX_MEDIA_BYTES / 3) * 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data) || data.length % 4 !== 0) throw new ClipError('Expected a WebM recording of at most 16 MB.');
@@ -36,8 +38,6 @@ export function buildQuestions(stage: ClipRequest['stage'], rules = DEFAULT_RULE
     worthy: { type: 'noul', instructions: rules.worthy },
     arc: { type: 'noul', instructions: rules.arc },
     category: trigger.trigger_type,
-    peak_position: { type: 'choice', instructions: 'Where is the main payoff or peak in this video? Choose the nearest percentage of the video duration.', criteria: Object.fromEntries([10, 25, 40, 55, 70, 85, 95].map(n => [`p${n}`, `The peak is near ${n}% of the video duration.`])) },
-    best_clip_duration: { type: 'choice', instructions: 'Choose the shortest duration that preserves the setup, main payoff, and reaction. Never prefer a duration longer than the input video.', criteria: Object.fromEntries([10, 15, 20, 30, 45, 60].map(n => [`s${n}`, `${n} seconds.`])) },
     viral: { type: 'score', instructions: 'Rate the likelihood viewers would share this highlight, based only on the content.', criteria: ['No sharing appeal.', 'Limited niche appeal.', 'Moderately shareable.', 'Strong sharing appeal.', 'Exceptional memorable moment.'] },
     hook: { type: 'score', instructions: 'Rate how strongly this highlight could grab attention in the first seconds of a short clip.', criteria: ['No clear hook.', 'Weak hook needing context.', 'Understandable but ordinary.', 'Strong immediate hook.', 'Exceptional immediate curiosity or impact.'] },
   };
@@ -79,10 +79,11 @@ export function createDecisionJudge(call?: (payload: Decisions.CreateDecisionReq
     const start = Date.now();
     let response: Decisions.CreateDecisionResponse;
     try {
-      response = await (call ? call(payload) : new GoogleGenAI({ apiKey: key, apiVersion: 'v1beta' }).decisions.create(payload, { timeout_ms: 45_000, retries: { strategy: 'none' } }));
+      response = await clipSpan('gemini.decisions', { model: payload.model, analysisStage: request.stage, mediaBytes: media.length, durationSec, resolution: request.resolution }, () => call ? call(payload) : new GoogleGenAI({ apiKey: key, apiVersion: 'v1beta' }).decisions.create(payload, { timeout_ms: 45_000, retries: { strategy: 'none' } }));
     } catch { throw new ClipError('Gemini Decisions request failed. Check the server key, model access, and quota; retry manually.', 502); }
+    clipEvent('decisions.response', { answers: response.answers, usage: response.usage, blockReason: response.prompt_feedback?.block_reason });
     const answers = validateAnswers(response, questions);
-    return { answers, usage: response.usage, durationSec, sourceOffsetSec, trim: trimBounds(answers, durationSec), ...(request.stage !== 'probe' ? { media: media.toString('base64') } : {}), inspection: {
+    return { answers, usage: response.usage, durationSec, sourceOffsetSec, trim: { start: 0, end: durationSec }, ...(request.stage !== 'probe' ? { media: media.toString('base64') } : {}), inspection: {
       request: { ...payload, apiVersion: 'v1beta', input: (payload.input as Decisions.DecisionInputContent[]).map(c => c.type === 'video' ? { ...c, data: `[${media.length} bytes of base64 WebM omitted from inspector]` } : c) },
       response, elapsedMs: Date.now() - start,
     } };

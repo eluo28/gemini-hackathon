@@ -5,6 +5,10 @@ import { createStageCapture } from '../services/stageCapture';
 import { DEFAULT_RULES, DEFAULT_THRESHOLDS, probability, type ClipResult, type ClipRules, type ClipThresholds, type ClipStage, type SavedClip } from '../shared/clipping';
 import type { ChatMessage, RoomParticipant } from '../utils/types';
 
+const clipDebug = (event: string, fields: Record<string, unknown> = {}) => {
+  if (import.meta.env.DEV) console.debug('[clipping]', { timestamp: new Date().toISOString(), event, ...fields });
+};
+
 export interface ImportableClip { id: string; runId: string; clipId: number; title: string; start: number; end: number }
 interface Options { active: boolean; roomId: string; localStream: MediaStream | null; remoteStreams: Record<string, MediaStream>; participants: RoomParticipant[]; selfName: string; messages: ChatMessage[] }
 export async function toBase64(blob: Blob): Promise<string> {
@@ -16,6 +20,7 @@ export function useAutoClipper(options: Options) {
   const [deepJudge, setDeepJudge] = useState(true);
   const [intervalSec, setIntervalSec] = useState(15);
   const [resolution, setResolution] = useState<'medium' | 'high'>('medium');
+  const [query, setQuery] = useState('');
   const [rules, setRules] = useState<ClipRules>(DEFAULT_RULES);
   const [thresholds, setThresholds] = useState<ClipThresholds>(DEFAULT_THRESHOLDS);
   const [queue, setQueue] = useState<SavedClip[]>([]);
@@ -32,8 +37,8 @@ export function useAutoClipper(options: Options) {
   const ready = libraryLoaded && !!status?.configured && !!status?.mediaReady;
   const recorder = useRef<RollingRecorder | null>(null);
   const capture = useRef<ReturnType<typeof createStageCapture> | null>(null);
-  const latestConfig = useRef({ options, includeChat, deepJudge, resolution, rules, thresholds });
-  latestConfig.current = { options, includeChat, deepJudge, resolution, rules, thresholds };
+  const latestConfig = useRef({ options, includeChat, deepJudge, resolution, rules, thresholds, query });
+  latestConfig.current = { options, includeChat, deepJudge, resolution, rules, thresholds, query };
   const generation = useRef(0);
   const inFlight = useRef(false);
   const controller = useRef<AbortController | null>(null);
@@ -58,6 +63,7 @@ export function useAutoClipper(options: Options) {
   }, [refreshLibrary]);
 
   const cancelSession = useCallback(() => {
+    clipDebug('session.cancelled', { generation: generation.current });
     generation.current++; lastTrigger.current = 0; controller.current?.abort(); controller.current = null;
     pending.current = null; if (pendingTimer.current) clearTimeout(pendingTimer.current);
     inFlight.current = false; setBusy(false);
@@ -83,24 +89,31 @@ export function useAutoClipper(options: Options) {
     if (token !== generation.current) return null;
     const c = latestConfig.current;
     const chat = c.includeChat ? c.options.messages.filter(m => m.timestamp >= media.startedAt && m.timestamp <= media.endedAt).slice(-100).map(m => ({ name: m.senderName.slice(0, 80), text: m.text.slice(0, 1000), offsetSec: (m.timestamp - media.startedAt) / 1000 })) : [];
+    const captureId = crypto.randomUUID();
+    const started = performance.now();
+    clipDebug('analysis.started', { traceId: captureId, stage, source, durationSec: media.durationSec, mediaBytes: media.blob.size });
     const abort = new AbortController(); controller.current = abort;
-    const timeout = setTimeout(() => abort.abort(), 240_000);
+    const timeout = setTimeout(() => abort.abort(), 420_000);
     try {
-      const response = await fetch('/api/clips/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: abort.signal, body: JSON.stringify({ stage, resolution: stage === 'judge' ? c.resolution : 'low', media: await toBase64(media.blob), durationSec: media.durationSec, targetSeconds: stage === 'judge' ? 60 : 15, chat, rules: c.rules, capture: { id: crypto.randomUUID(), roomId: c.options.roomId, source, startedAt: media.startedAt, thresholds: c.thresholds } }) });
+      const response = await fetch('/api/clips/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Request-ID': captureId }, signal: abort.signal, body: JSON.stringify({ stage, resolution: stage === 'judge' ? c.resolution : 'low', media: await toBase64(media.blob), durationSec: media.durationSec, targetSeconds: stage === 'judge' ? 60 : 15, chat, rules: c.rules, ...(['manual', 'voice', 'manual-flush'].includes(source) && c.query.trim() ? { query: c.query.trim() } : {}), capture: { id: captureId, roomId: c.options.roomId, source, startedAt: media.startedAt, thresholds: c.thresholds } }) });
       const result = await response.json() as ClipResult & { error?: string };
-      if (!response.ok) throw new Error(result.error || 'Clip analysis failed.');
+      clipDebug('analysis.response', { traceId: response.headers.get('X-Request-ID') || captureId, status: response.status, elapsedMs: Math.round(performance.now() - started), selection: result.selection, savedClipId: result.savedClip?.id });
+      if (!response.ok) throw new Error(`${result.error || 'Clip analysis failed.'}${response.headers.has('X-Request-ID') ? ` (trace ${response.headers.get('X-Request-ID')})` : ''}`);
       if (token !== generation.current) return null;
       const { media: video, ...metadata } = result;
       setLatest(metadata);
       setHistory(old => [{ id: crypto.randomUUID(), stage, result: metadata }, ...old].slice(0, 20));
       if (result.savedClip) setQueue(old => [result.savedClip!, ...old.filter(clip => clip.id !== result.savedClip!.id)]);
       return result;
+    } catch (error) {
+      clipDebug('analysis.failed', { traceId: captureId, elapsedMs: Math.round(performance.now() - started), error: (error as Error).message });
+      throw error;
     } finally { clearTimeout(timeout); }
   }, []);
 
   const run = useCallback(async (stage: ClipStage, source: string) => {
-    if (!ready || !recorder.current || recorder.current.bufferedSeconds < 1 || inFlight.current) return null;
-    const token = generation.current; inFlight.current = true; setBusy(true); setError(''); setPhase(stage === 'probe' ? 'Probing' : 'Judging');
+    if (!ready || !recorder.current || recorder.current.bufferedSeconds < 1 || inFlight.current) { clipDebug('capture.skipped', { ready, hasRecorder: !!recorder.current, bufferedSeconds: recorder.current?.bufferedSeconds, inFlight: inFlight.current, source }); return null; }
+    const token = generation.current; inFlight.current = true; setBusy(true); setError(''); setPhase(stage === 'probe' ? 'Probing' : 'Preparing clip');
     try {
       const media = await recorder.current.snapshot(stage === 'judge' ? 60 : 15);
       const result = await analyze(media, stage, source, token);
@@ -111,10 +124,11 @@ export function useAutoClipper(options: Options) {
   }, [analyze, ready]);
 
   const flush = useCallback((source = 'manual', triggeredAt = Date.now()) => {
-    if (!ready || !recorder.current || recorder.current.bufferedSeconds < 1 || pending.current) return;
+    if (!ready || !recorder.current || recorder.current.bufferedSeconds < 1 || pending.current) { clipDebug('trigger.skipped', { ready, hasRecorder: !!recorder.current, bufferedSeconds: recorder.current?.bufferedSeconds, pending: !!pending.current, source }); return; }
     const token = generation.current;
     // API latency already contributed post-roll after the probed window ended.
     const delay = latestConfig.current.deepJudge ? Math.max(0, triggeredAt + 10_000 - Date.now()) : 0;
+    clipDebug('trigger.scheduled', { source, postRollMs: delay, inFlight: inFlight.current });
     pending.current = { deadline: Date.now() + delay, source }; setBusy(true); setPhase(delay ? `Post-roll · ${Math.ceil(delay / 1000)}s` : 'Waiting for current analysis');
     const captureWhenReady = () => {
       if (token !== generation.current || !pending.current) return;
@@ -155,5 +169,5 @@ export function useAutoClipper(options: Options) {
       setImports(old => old.filter(c => c.runId !== entry.runId || c.clipId !== entry.clipId));
     } catch (e) { setError((e as Error).message); }
   };
-  return { autoProbe, setAutoProbe, includeChat, setIncludeChat, deepJudge, setDeepJudge, intervalSec, setIntervalSec, resolution, setResolution, setRules, rules, thresholds, setThresholds, queue, history, latest, error, setError, phase, bufferedSeconds, recording, busy, status, ready, probe, flush, remove, imports: imports.filter(entry => !queue.some(clip => clip.id === entry.id)), importClip, libraryLoaded };
+  return { query, setQuery, autoProbe, setAutoProbe, includeChat, setIncludeChat, deepJudge, setDeepJudge, intervalSec, setIntervalSec, resolution, setResolution, setRules, rules, thresholds, setThresholds, queue, history, latest, error, setError, phase, bufferedSeconds, recording, busy, status, ready, probe, flush, remove, imports: imports.filter(entry => !queue.some(clip => clip.id === entry.id)), importClip, libraryLoaded };
 }
