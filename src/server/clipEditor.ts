@@ -1,6 +1,6 @@
 import { clipEvent, clipSpan } from './clipTelemetry';
 import { FunctionCallingConfigMode, type Content, type FunctionDeclaration, type GenerateContentResponseUsageMetadata } from '@google/genai';
-import { type AgentInspection, type ClipEdit, type ClipRequest, type ClipResult, type ClipReview, shouldEditClip, probability, DEFAULT_THRESHOLDS } from '../shared/clipping';
+import { type AgentInspection, type ClipEdit, type ClipRequest, type ClipResult, type ClipReview, shouldEditClip, soundboardTrigger, probability, DEFAULT_THRESHOLDS } from '../shared/clipping';
 import { ClipError, createDecisionJudge } from './clipDecisions';
 import { runAgent, sumUsage, videoContext, type AgentOptions } from './clipAgents';
 import { createClipBriefer } from './clipBrief';
@@ -75,8 +75,10 @@ export function createClipEditor(options: AgentOptions & { reviewer?: ReturnType
 
 export function createClipAnalyzer(judge = createDecisionJudge(), editor = createClipEditor(), briefer = createClipBriefer()) {
   return async (...args: Parameters<typeof judge>): Promise<ClipResult> => {
-    const [request, media] = args;
-    const result = await clipSpan('judge', { analysisStage: request.stage }, () => judge(...args));
+    const [request, media, durationSec, sourceOffsetSec] = args;
+    const result = request.stage === 'judge' && request.capture?.source === 'soundboard'
+      ? { ...soundboardTrigger(durationSec, sourceOffsetSec), media: media.toString('base64') }
+      : await clipSpan('judge', { analysisStage: request.stage }, () => judge(...args));
     const eligible = shouldEditClip(request, result.answers);
     const thresholds = request.capture?.thresholds || DEFAULT_THRESHOLDS;
     const failedThresholds = ['worthy', 'arc', 'viral', 'hook'].filter(key => (probability(result.answers, key) ?? 0) < thresholds[key as keyof typeof thresholds]);

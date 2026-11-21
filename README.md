@@ -67,7 +67,9 @@ Hosts and co-hosts can open **Soundboard** in the stream control dock in develop
 and production. Go live with clip detection enabled to play air horn, applause,
 victory, or drum sting into the stream and clip buffer. Volume and Stop controls
 are included; microphone mute does not mute the soundboard. Completed sounds
-request a normal detection check using the configured clipping thresholds.
+create an explicit 100% soundboard event and start clip editing, bypassing
+automatic thresholds. This event is labeled separately from AI probabilities.
+Stopping a sound cancels its trigger.
 
 ## Local clip telemetry
 

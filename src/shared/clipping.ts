@@ -24,6 +24,7 @@ export interface ClipRequest {
   rules: ClipRules;
 }
 export interface ClipResult {
+  triggerSource?: 'soundboard';
   brief?: ClipBrief;
   edit?: ClipEdit;
   savedClip?: SavedClip;
@@ -35,6 +36,15 @@ export interface ClipResult {
   trim: { start: number; end: number };
   media?: string;
   inspection: { request: unknown; response: Decisions.CreateDecisionResponse; elapsedMs: number; brief?: AgentInspection; editor?: AgentInspection };
+}
+// A completed playback is an observed app event, not a model probability.
+export function soundboardTrigger(durationSec: number, sourceOffsetSec = 0): ClipResult {
+  return {
+    triggerSource: 'soundboard',
+    answers: { trigger_detected: { type: 'noul', noul: 1, confidence: 1 } },
+    durationSec, sourceOffsetSec, trim: { start: 0, end: durationSec },
+    inspection: { request: { source: 'soundboard', event: 'playback-completed' }, response: {}, elapsedMs: 0 },
+  };
 }
 export interface AgentInspection { request: unknown; response: unknown; elapsedMs: number; steps?: { agent: 'neon' | 'hydrogen-review'; inspection: AgentInspection }[] }
 export interface ClipBrief {
@@ -66,7 +76,7 @@ export interface ClipEdit {
 }
 export function shouldEditClip(request: ClipRequest, answers: ClipAnswers) {
   return request.stage !== 'probe' && (!!request.query?.trim() || !request.capture ||
-    ['manual', 'voice', 'manual-flush'].includes(request.capture.source) || qualifies(answers, request.capture.thresholds));
+    ['manual', 'voice', 'manual-flush', 'soundboard'].includes(request.capture.source) || qualifies(answers, request.capture.thresholds));
 }
 export function probability(answers: ClipAnswers, key: string): number | null {
   const answer = answers[key];
@@ -84,7 +94,7 @@ export function qualifies(answers: ClipAnswers, thresholds: ClipThresholds): boo
 export interface ClipCapture {
   id: string;
   roomId: string;
-  source: 'manual' | 'voice' | 'manual-flush' | 'auto-trigger' | 'auto-probe';
+  source: 'manual' | 'voice' | 'manual-flush' | 'soundboard' | 'auto-trigger' | 'auto-probe';
   startedAt: number;
   thresholds: ClipThresholds;
 }

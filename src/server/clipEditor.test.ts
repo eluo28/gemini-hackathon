@@ -148,3 +148,17 @@ test('delegation is capped and a failing specialist cannot produce a saved edit'
   await assert.rejects(createClipAnalyzer(async () => result, createClipEditor({ generate: async () => { editorCalls++; return response(); } }), createClipBriefer({ generate: async () => ({ candidates: [{ finishReason: FinishReason.STOP }], text: '{}' }) }))(request, media, 45, 15));
   assert.equal(editorCalls, 0);
 });
+
+test('completed soundboard events exceed 50% and enter editing without an AI trigger score', async () => {
+  let edits = 0;
+  const analyze = createClipAnalyzer(async () => { throw new Error('Soundboard should not call Decisions'); },
+    createClipEditor({ generate: async () => { edits++; return response(); } }), briefer);
+  const output = await analyze({ ...request, capture: {
+    id: 'soundboard', source: 'soundboard', startedAt: 0, roomId: 'room', thresholds: { ...DEFAULT_THRESHOLDS, trigger: 1 },
+  } }, media, 45, 15);
+  assert.equal(output.triggerSource, 'soundboard');
+  assert.deepEqual(output.answers.trigger_detected, { type: 'noul', noul: 1, confidence: 1 });
+  assert.equal(edits, 1);
+  assert.ok(output.inspection.editor);
+  assert.deepEqual(output.inspection.request, { source: 'soundboard', event: 'playback-completed' });
+});

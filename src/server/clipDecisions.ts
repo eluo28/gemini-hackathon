@@ -16,8 +16,9 @@ export function parseClipRequest(value: unknown): ClipRequest {
   if (!Array.isArray(v.chat) || v.chat.length > 100 || v.chat.some(c => !c || typeof c.name !== 'string' || c.name.length > 80 || typeof c.text !== 'string' || c.text.length > 1000 || !Number.isFinite(c.offsetSec) || c.offsetSec < 0 || c.offsetSec > v.durationSec)) throw new ClipError('Invalid timestamped chat context.');
   if (v.capture) {
     const c = v.capture;
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(c.id) || typeof c.roomId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(c.roomId) || !['manual','voice','manual-flush','auto-trigger','auto-probe'].includes(c.source) || !Number.isFinite(c.startedAt) || c.startedAt < 0 || !c.thresholds || (Object.keys(DEFAULT_THRESHOLDS) as (keyof typeof DEFAULT_THRESHOLDS)[]).some(k => !Number.isFinite(c.thresholds[k]) || c.thresholds[k] < 0 || c.thresholds[k] > 1)) throw new ClipError('Invalid clip capture metadata.');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(c.id) || typeof c.roomId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(c.roomId) || !['manual','voice','manual-flush','soundboard','auto-trigger','auto-probe'].includes(c.source) || !Number.isFinite(c.startedAt) || c.startedAt < 0 || !c.thresholds || (Object.keys(DEFAULT_THRESHOLDS) as (keyof typeof DEFAULT_THRESHOLDS)[]).some(k => !Number.isFinite(c.thresholds[k]) || c.thresholds[k] < 0 || c.thresholds[k] > 1)) throw new ClipError('Invalid clip capture metadata.');
   }
+  if (v.capture?.source === 'soundboard' && v.stage !== 'judge') throw new ClipError('Soundboard events must use the editing stage.');
   return { ...v, ...(v.query ? { query: v.query.trim() } : {}), resolution: v.stage === 'judge' ? v.resolution : 'low' };
 }
 export function decodeWebm(data: unknown) {

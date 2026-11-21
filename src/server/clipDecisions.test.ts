@@ -82,3 +82,9 @@ test('clip routes validate input, block cross-origin requests, and cap concurren
   resolvers.forEach(r => r());
   for (const result of await Promise.all([first, second])) { assert.equal(result.status, 200); assert.equal(result.headers.get('cache-control'), 'no-store'); }
 });
+
+test('soundboard captures are accepted only for full-context editing', () => {
+  const capture = { id: '12345678-1234-1234-1234-123456789abc', source: 'soundboard', startedAt: 0, roomId: 'room', thresholds: DEFAULT_THRESHOLDS };
+  assert.equal(parseClipRequest({ ...request, capture }).capture?.source, 'soundboard');
+  for (const stage of ['probe', 'instant']) assert.throws(() => parseClipRequest({ ...request, capture, stage }));
+});

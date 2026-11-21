@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { registerClipSink } from '../services/clipSink';
 import { RollingRecorder, type BufferedMedia } from '../services/rollingRecorder';
 import { createStageCapture } from '../services/stageCapture';
-import { DEFAULT_RULES, DEFAULT_THRESHOLDS, probability, type ClipResult, type ClipRules, type ClipThresholds, type ClipStage, type SavedClip } from '../shared/clipping';
+import { DEFAULT_RULES, DEFAULT_THRESHOLDS, probability, soundboardTrigger, type ClipResult, type ClipRules, type ClipThresholds, type ClipStage, type SavedClip } from '../shared/clipping';
 import type { ChatMessage, RoomParticipant } from '../utils/types';
 
 const clipDebug = (event: string, fields: Record<string, unknown> = {}) => {
@@ -151,26 +151,30 @@ export function useAutoClipper(options: Options) {
       lastTrigger.current = outcome.endedAt; flush('auto-trigger', outcome.endedAt);
     }
   }, [run, flush]);
-  // Check recorded sound with the real detector, preserving its scores and thresholds.
+  // Playback completion is a guaranteed trigger, separate from AI detection.
   const detectSoundboard = useCallback(() => {
     if (!ready || !recorder.current) return;
     if (soundboardTimer.current) clearTimeout(soundboardTimer.current);
     const token = generation.current;
+    const triggeredAt = Date.now();
     const deadline = Date.now() + 10_000;
     const check = () => {
       soundboardTimer.current = null;
       if (token !== generation.current || !recorder.current) return;
       if (pending.current) return; // An already-triggered full judge includes this moment.
-      if (inFlight.current) {
+      if (recorder.current.bufferedSeconds < 1) {
         if (Date.now() < deadline) soundboardTimer.current = setTimeout(check, 250);
-        else setError('Detection is still busy. Play the sound again after it finishes.');
+        else setError('The clip buffer is not ready. Play the sound again after it starts.');
         return;
       }
-      clipDebug('soundboard.detect');
-      void probe();
+      const result = soundboardTrigger(Math.min(60, recorder.current.bufferedSeconds));
+      setLatest(result);
+      setHistory(old => [{ id: crypto.randomUUID(), stage: 'probe' as const, result }, ...old].slice(0, 20));
+      clipDebug('soundboard.trigger', { signal: 1 });
+      flush('soundboard', triggeredAt);
     };
     soundboardTimer.current = setTimeout(check, 350);
-  }, [probe, ready]);
+  }, [flush, ready]);
   useEffect(() => { if (!autoProbe || !recording || !ready) return; const timer = setInterval(() => void probe(), intervalSec * 1000); return () => clearInterval(timer); }, [autoProbe, recording, ready, intervalSec, probe]);
   useEffect(() => {
     registerClipSink({ name: 'gemini-decisions', onClipMarked: ({ marker }) => { if (marker.roomId === latestConfig.current.options.roomId && latestConfig.current.options.active) flush(marker.source); } });

@@ -78,6 +78,9 @@ test('automatic qualifying cuts and manual low-score captures save directly; pro
   assert.equal(manual.savedClip.description, brief.description);
   assert.deepEqual(windows.at(-1), { start: 20, end: 30 });
   assert.equal((await post('voice')).selection, 'saved');
+  const soundboard = await post('soundboard');
+  assert.equal(soundboard.selection, 'saved');
+  assert.equal(soundboard.savedClip.source, 'soundboard');
   const requested = await post('auto-trigger', 'judge', 'the failed comeback');
   assert.equal(requested.selection, 'saved');
   assert.equal(requested.savedClip.query, 'the failed comeback');
@@ -86,7 +89,7 @@ test('automatic qualifying cuts and manual low-score captures save directly; pro
   assert.equal((await post('auto-probe', 'instant')).selection, 'saved');
   assert.equal((await post('auto-probe', 'probe')).savedClip, undefined);
   const list = await (await fetch(`${base}/library`, { headers: { Cookie: cookie } })).json();
-  assert.equal(list.clips.length, 5);
+  assert.equal(list.clips.length, 6);
   const reloaded = list.clips.find((clip: SavedClip) => clip.id === manual.savedClip.id);
   assert.equal(reloaded.title, brief.title);
   assert.equal(reloaded.description, brief.description);
