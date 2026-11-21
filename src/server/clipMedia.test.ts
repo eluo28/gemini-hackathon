@@ -6,18 +6,23 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { normalizeMedia, mediaAvailable } from './clipMedia';
+import { ffmpegPath } from './mediaBinaries';
 const exec = promisify(execFile);
 test('FFmpeg produces a decodable, timestamped WebM tail and an accurately trimmed download', async t => {
-  if (!await mediaAvailable()) { t.skip('FFmpeg is not installed'); return; }
+  // Reproduce a deployed Node host with no globally installed media tools.
+  const previousPath = process.env.PATH;
+  process.env.PATH = '';
+  t.after(() => { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; });
+  assert.equal(await mediaAvailable(), true);
   const dir = await mkdtemp(path.join(tmpdir(), 'clip-test-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'sample.webm');
-  await exec(process.env.FFMPEG_PATH || 'ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=20', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '3', '-c:v', 'libvpx', '-deadline', 'realtime', '-c:a', 'libopus', file]);
+  await exec(ffmpegPath(), ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=20', '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '3', '-c:v', 'libvpx', '-deadline', 'realtime', '-c:a', 'libopus', file]);
   const full = await normalizeMedia(await readFile(file), 3, { tail: 60 });
   assert.equal(full.sourceOffsetSec, 0);
   assert.ok(Math.abs(full.durationSec - 3) < .15);
   const remuxed = path.join(dir, 'remuxed.webm');
   await writeFile(remuxed, full.media);
-  await exec(process.env.FFMPEG_PATH || 'ffmpeg', ['-v', 'error', '-i', remuxed, '-f', 'null', '-']);
+  await exec(ffmpegPath(), ['-v', 'error', '-i', remuxed, '-f', 'null', '-']);
   const fullCut = await normalizeMedia(full.media, full.durationSec, { start: .5, end: 1.5 });
   assert.ok(Math.abs(fullCut.durationSec - 1) < .15);
   const normalized = await normalizeMedia(await readFile(file), 3, { tail: 2 });

@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { ffmpegPath, ffprobePath } from '../src/server/mediaBinaries';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
@@ -17,7 +18,7 @@ if (!source) throw new Error('Usage: npx tsx scripts/clip-video.ts <video> [outp
 const output = path.resolve(process.argv[3] || `.data/clip-runs/${Date.now()}`);
 const work = path.join(output, '.work');
 await mkdir(work, { recursive: true });
-const metadata = JSON.parse((await exec(process.env.FFPROBE_PATH || 'ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', source])).stdout);
+const metadata = JSON.parse((await exec(ffprobePath(), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', source])).stdout);
 const duration = Number(metadata.format.duration);
 if (!Number.isFinite(duration) || duration <= 0) throw new Error('Cannot read video duration.');
 const judge = createClipAnalyzer();
@@ -34,7 +35,7 @@ if (process.argv.includes('--resume')) {
 }
 const checkpoint = () => writeFile(path.join(output, 'results.json'), JSON.stringify(report, null, 2));
 async function extract(start: number, length: number, file: string, mp4 = false) {
-  await exec(process.env.FFMPEG_PATH || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostdin', '-ss', start.toFixed(3), '-i', source, '-t', length.toFixed(3), '-map', '0:v:0', '-map', '0:a:0?', '-vf', 'scale=960:540:force_original_aspect_ratio=decrease:force_divisible_by=2', '-r', '20', ...(mp4 ? ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart'] : ['-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '900k', '-c:a', 'libopus', '-b:a', '64k']), '-threads', '2', '-y', file], { timeout: 90_000, maxBuffer: 1024 * 1024 });
+  await exec(ffmpegPath(), ['-hide_banner', '-loglevel', 'error', '-nostdin', '-ss', start.toFixed(3), '-i', source, '-t', length.toFixed(3), '-map', '0:v:0', '-map', '0:a:0?', '-vf', 'scale=960:540:force_original_aspect_ratio=decrease:force_divisible_by=2', '-r', '20', ...(mp4 ? ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart'] : ['-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '900k', '-c:a', 'libopus', '-b:a', '64k']), '-threads', '2', '-y', file], { timeout: 90_000, maxBuffer: 1024 * 1024 });
 }
 async function analyze(stage: 'probe' | 'judge', start: number, end: number) {
   const file = path.join(work, `${stage}.webm`);
@@ -85,7 +86,7 @@ try {
     const file = `${stem}.mp4`; const webm = `${stem}.webm`; const poster = `${stem}.jpg`;
     await extract(candidate.start, candidate.end - candidate.start, path.join(output, file), true);
     await extract(candidate.start, candidate.end - candidate.start, path.join(output, webm));
-    await exec(process.env.FFMPEG_PATH || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', '-ss', String(candidate.start + Math.min(2, (candidate.end - candidate.start) / 2)), '-i', source, '-frames:v', '1', '-vf', 'scale=640:-2', '-y', path.join(output, poster)], { timeout: 15000 });
+    await exec(ffmpegPath(), ['-hide_banner', '-loglevel', 'error', '-ss', String(candidate.start + Math.min(2, (candidate.end - candidate.start) / 2)), '-i', source, '-frames:v', '1', '-vf', 'scale=640:-2', '-y', path.join(output, poster)], { timeout: 15000 });
     const { result, ...summary } = candidate;
     report.clips.push({ ...summary, category: result.answers.category?.type === 'choice' ? result.answers.category.choice : 'highlight', file, webm, poster });
     await checkpoint();

@@ -159,10 +159,41 @@ Missing/opaque origins and cross-origin browser requests without an explicit
 configured origin remain rejected. Creator ownership cookies are still required
 when editing an existing profile. No global `trust proxy` setting is enabled.
 
+## Hosted clipping (AI Studio / Cloud Run)
+
+The frontend and backend ship together: `npm start` runs `server.ts`, which serves
+both the built frontend and `/api/clips/*`. The hosting service must run this
+Node server, not only serve the `dist` folder.
+
+Clipping uses native executables. `ffmpeg-static` and `@ffprobe-installer/ffprobe`
+install platform-specific binaries with the production npm dependencies; the
+server invokes their absolute paths. A global FFmpeg installation is not required.
+Install dependencies on the deployment's target OS/architecture (`npm ci`), with
+install scripts and optional dependencies enabled. Do not upload macOS
+`node_modules` to a Linux host. `FFMPEG_PATH` / `FFPROBE_PATH` can override the
+bundled binaries, but must refer to paths on the server.
+
+`npm run build` checks both executables before building the frontend, so missing
+media tools fail the build instead of silently disabling clipping. Deploy the
+updated source and lockfile through the existing AI Studio/Cloud Run deployment,
+keep `GEMINI_API_KEY` in the server's secrets, and run with `NODE_ENV=production`.
+Pushing to GitHub alone does not redeploy an AI Studio app unless an explicit
+continuous-deployment integration has been configured.
+
+After deployment, `/api/clips/status` must report `configured: true` and
+`mediaReady: true`; reload open studio tabs to refresh their setup check. If the
+check fails, inspect server logs for the specific executable error or run
+`npm run check:media` in the deployment environment.
+
+Clip files currently use local disk (`.data/clips` by default). Cloud Run's
+filesystem is ephemeral; this fix enables processing but does not add durable,
+shared storage across restarts or instances.
+
 ## Local Gemini auto-clipping
 
-1. Use Node 22+, install dependencies with `npm install`, and install **ffmpeg + ffprobe**
-   (`brew install ffmpeg` on macOS). Optional binary overrides: `FFMPEG_PATH` / `FFPROBE_PATH`.
+1. Use Node 22+ and install dependencies with `npm ci`. **FFmpeg + ffprobe** are
+   installed as production dependencies for the host platform; no global install
+   is needed. Optional binary overrides: `FFMPEG_PATH` / `FFPROBE_PATH`.
 2. Create **`.env.local`** at the repository root with `GEMINI_API_KEY="your-key"`.
    This file is ignored by Git. `.env.local` takes precedence over `.env`; existing
    shell environment variables take precedence over both. The key is used only by Express.

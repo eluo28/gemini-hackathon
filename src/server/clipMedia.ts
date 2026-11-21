@@ -4,9 +4,16 @@ import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ClipError, MAX_MEDIA_BYTES } from './clipDecisions';
+import { ffmpegPath, ffprobePath } from './mediaBinaries';
 const exec = promisify(execFile);
 export async function mediaAvailable() {
-  try { await Promise.all([exec(process.env.FFMPEG_PATH || 'ffmpeg', ['-version'], { timeout: 3000 }), exec(process.env.FFPROBE_PATH || 'ffprobe', ['-version'], { timeout: 3000 })]); return true; } catch { return false; }
+  try {
+    await Promise.all([exec(ffmpegPath(), ['-version'], { timeout: 10_000 }), exec(ffprobePath(), ['-version'], { timeout: 10_000 })]);
+    return true;
+  } catch (error) {
+    console.error('Clipping media tools failed. Reinstall production dependencies or check FFMPEG_PATH / FFPROBE_PATH.', error);
+    return false;
+  }
 }
 /** Remux whole recordings; decode and re-encode cuts for accurate boundaries. */
 export async function normalizeMedia(bytes: Buffer, duration: number, window: { tail?: number; start?: number; end?: number }) {
@@ -24,7 +31,7 @@ export async function normalizeMedia(bytes: Buffer, duration: number, window: { 
     // container makes it seekable without encoding a minute of live video again.
     // Actual cuts still re-encode so their boundaries do not depend on keyframes.
     const wholeRecording = window.tail !== undefined && window.tail >= duration && duration <= 60;
-    await exec(process.env.FFMPEG_PATH || 'ffmpeg', [
+    await exec(ffmpegPath(), [
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-protocol_whitelist', 'file,pipe', '-i', input,
       '-ss', String(start), '-t', String(length), '-map', '0:v:0', '-map', '0:a:0?',
       ...(wholeRecording ? ['-c', 'copy'] : [
@@ -34,13 +41,13 @@ export async function normalizeMedia(bytes: Buffer, duration: number, window: { 
     ], { timeout: 45_000, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 });
     const media = await readFile(output);
     if (media.length > MAX_MEDIA_BYTES) throw new ClipError('Encoded clip exceeds 16 MB.');
-    const { stdout } = await exec(process.env.FFPROBE_PATH || 'ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', output], { timeout: 5000 });
+    const { stdout } = await exec(ffprobePath(), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', output], { timeout: 5000 });
     const actual = Number(JSON.parse(stdout).format?.duration);
     if (!Number.isFinite(actual) || actual < .1 || actual > 61) throw new ClipError('Recording contained no usable video.');
     return { media, durationSec: actual, sourceOffsetSec: start };
   } catch (error) {
     if (error instanceof ClipError) throw error;
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new ClipError('Install ffmpeg and ffprobe locally to prepare playable clips.', 503);
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new ClipError('The server is missing its media tools. Redeploy with FFmpeg and ffprobe dependencies installed.', 503);
     throw new ClipError('Could not decode this recording. Restart the buffer and try again.', 422);
   } finally { await rm(dir, { recursive: true, force: true }); }
 }
