@@ -118,3 +118,7 @@ not a passing score. Empty outputs on labeled positives mean zero recall.
 Eight scorer/config tests cover exact cuts, excessively long cuts, misses,
 duplicates, ambiguous matching, partial coverage, invalid references, source
 drift, and removal of the safety gate. Run with `npm test`.
+
+## Shop image smoke set
+
+See [shop-image/README.md](shop-image/README.md) for 24 synthetic image-question cases, licensed input images, a blank Shop grading worksheet, and an opt-in runner. Validation makes no model or shopping calls; no measured results are prefilled.
