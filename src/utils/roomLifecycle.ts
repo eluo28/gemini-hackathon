@@ -42,26 +42,78 @@ export function filterAndSortDirectoryRooms(
   query = '',
   category: StreamCategory | 'All' = 'All'
 ): RoomSummary[] {
-  const needle = query.trim().toLowerCase();
+  if (!Array.isArray(rooms)) return [];
+  const needle = String(query || '').trim().toLowerCase();
   return rooms
     .filter((room) => {
+      if (!room || typeof room !== 'object' || typeof room.roomId !== 'string') return false;
       if (!isRoomVisibleInDirectory(room)) return false;
       if (category !== 'All' && room.category !== category) return false;
       if (!needle) return true;
       return (
-        room.title.toLowerCase().includes(needle) ||
+        String(room.title || '').toLowerCase().includes(needle) ||
         room.roomId.toLowerCase().includes(needle) ||
-        room.hostName.toLowerCase().includes(needle) ||
-        room.category.toLowerCase().includes(needle)
+        String(room.hostName || '').toLowerCase().includes(needle) ||
+        String(room.category || '').toLowerCase().includes(needle)
       );
     })
     .sort((a, b) => {
       if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
-      const aTotal = a.broadcasterCount + a.viewerCount;
-      const bTotal = b.broadcasterCount + b.viewerCount;
+      const aTotal = (a.broadcasterCount || 0) + (a.viewerCount || 0);
+      const bTotal = (b.broadcasterCount || 0) + (b.viewerCount || 0);
       if (aTotal !== bTotal) return bTotal - aTotal;
-      return b.lastActivityAt - a.lastActivityAt;
+      return (b.lastActivityAt || 0) - (a.lastActivityAt || 0);
     });
+}
+
+const VALID_RECENT_CATEGORIES = new Set<StreamCategory>([
+  'Just Chatting',
+  'Live Coding',
+  'Podcast & Talk',
+  'Music & Audio',
+  'Gaming',
+]);
+
+/**
+ * Safely parses persisted recent room history from localStorage, discarding
+ * corrupted or incomplete entries so bad storage data can never crash rendering.
+ */
+export function parseRecentRoomHistory(raw: string | null): RecentRoomEntry[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const cleaned: RecentRoomEntry[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue;
+      const candidate = item as Partial<RecentRoomEntry>;
+      if (typeof candidate.roomId !== 'string' || !candidate.roomId.trim()) continue;
+      const roomId = sanitizeRoomSlug(candidate.roomId);
+      const title =
+        typeof candidate.title === 'string' && candidate.title.trim()
+          ? candidate.title.trim().slice(0, 80)
+          : roomId;
+      const category: StreamCategory =
+        typeof candidate.category === 'string' &&
+        VALID_RECENT_CATEGORIES.has(candidate.category as StreamCategory)
+          ? (candidate.category as StreamCategory)
+          : 'Just Chatting';
+      const lastRole =
+        candidate.lastRole === 'host' ||
+        candidate.lastRole === 'cohost' ||
+        candidate.lastRole === 'viewer'
+          ? candidate.lastRole
+          : 'host';
+      const lastVisitedAt =
+        typeof candidate.lastVisitedAt === 'number' && Number.isFinite(candidate.lastVisitedAt)
+          ? candidate.lastVisitedAt
+          : Date.now();
+      cleaned.push({ roomId, title, category, lastRole, lastVisitedAt });
+    }
+    return cleaned.slice(0, 8);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -76,9 +128,11 @@ export function upsertRecentRoomHistory(
   const normalized: RecentRoomEntry = {
     ...entry,
     roomId: cleanId,
-    title: entry.title.trim() || cleanId,
+    title: String(entry.title || '').trim() || cleanId,
   };
-  const filtered = history.filter((item) => item.roomId !== cleanId);
+  const filtered = (Array.isArray(history) ? history : []).filter(
+    (item) => item && typeof item.roomId === 'string' && item.roomId !== cleanId
+  );
   return [normalized, ...filtered].slice(0, maxItems);
 }
 

@@ -78,8 +78,8 @@ export function shouldEditClip(request: ClipRequest, answers: ClipAnswers) {
   return request.stage !== 'probe' && (!!request.query?.trim() || !request.capture ||
     ['manual', 'voice', 'manual-flush', 'soundboard'].includes(request.capture.source) || qualifies(answers, request.capture.thresholds));
 }
-export function probability(answers: ClipAnswers, key: string): number | null {
-  const answer = answers[key];
+export function probability(answers: ClipAnswers | undefined, key: string): number | null {
+  const answer = answers?.[key];
   if (answer?.type === 'noul') return answer.noul;
   if (answer?.type === 'score') return answer.score / 4;
   return null;

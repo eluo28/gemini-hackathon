@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   Clock,
@@ -89,12 +89,21 @@ export function JoinStreamGate({
     return () => window.clearInterval(timer);
   }, []);
 
-  const visibleRooms = filterAndSortDirectoryRooms(directoryRooms, searchQuery, selectedCategory);
-  const sortedAllRooms = filterAndSortDirectoryRooms(directoryRooms);
-  const activeById = new Map(directoryRooms.map((r) => [r.roomId, r]));
-  const liveChannelCount = directoryRooms.filter((r) => r.isLive).length;
+  const visibleRooms = useMemo(
+    () => filterAndSortDirectoryRooms(directoryRooms, searchQuery, selectedCategory),
+    [directoryRooms, searchQuery, selectedCategory]
+  );
+  const sortedAllRooms = useMemo(
+    () => filterAndSortDirectoryRooms(directoryRooms),
+    [directoryRooms]
+  );
+  const activeById = useMemo(
+    () => new Map(directoryRooms.filter((r) => r && r.roomId).map((r) => [r.roomId, r])),
+    [directoryRooms]
+  );
+  const liveChannelCount = directoryRooms.filter((r) => r?.isLive).length;
   const totalOnlineCount = directoryRooms.reduce(
-    (sum, r) => sum + r.broadcasterCount + r.viewerCount,
+    (sum, r) => sum + (r?.broadcasterCount || 0) + (r?.viewerCount || 0),
     0
   );
 
@@ -102,8 +111,9 @@ export function JoinStreamGate({
   // auto-target the top active stream so clicking "Join Stream" immediately joins the live room instead of an empty default.
   useEffect(() => {
     if (hasInviteParam.current || hasUserEditedRoom) return;
-    if (sortedAllRooms.length > 0 && !activeById.has(sanitizeRoomSlug(roomInput))) {
-      setRoomInput(sortedAllRooms[0].roomId);
+    const topRoomId = sortedAllRooms[0]?.roomId;
+    if (topRoomId && roomInput !== topRoomId && !activeById.has(sanitizeRoomSlug(roomInput))) {
+      setRoomInput(topRoomId);
     }
   }, [sortedAllRooms, hasUserEditedRoom, roomInput, activeById]);
 

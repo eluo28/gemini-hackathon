@@ -67,7 +67,7 @@ export function ParticipantVideoTile({
         if (el.readyState >= 2 && el.videoWidth > 0) {
           setHasLiveVideoFrame(true);
         }
-        el.play().catch(() => {});
+        el.play()?.catch?.(() => {});
       };
       tryPlay();
 
@@ -113,7 +113,7 @@ export function ParticipantVideoTile({
       audioEl.muted = isPeerMuted;
       audioEl.volume = 1;
       if (!isPeerMuted) {
-        audioEl.play().catch(() => {
+        audioEl.play()?.catch?.(() => {
           onAudioBlocked();
         });
       }
@@ -193,7 +193,7 @@ export function ParticipantVideoTile({
           ) : (
             <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-full bg-slate-200/80 ring-4 ring-white shadow-md flex items-center justify-center">
               <span className="font-display text-2xl font-bold text-slate-600">
-                {participant.name.slice(0, 2).toUpperCase()}
+                {(participant.name || '?').slice(0, 2).toUpperCase()}
               </span>
             </div>
           )}

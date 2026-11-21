@@ -21,32 +21,66 @@ export function createStageCapture() {
     sources.forEach(({ video, name }, index) => {
       const w = 1280 / cols; const h = 720 / rows; const x = index % cols * w; const y = Math.floor(index / cols) * h;
       if (video.readyState >= 2 && video.videoWidth > 0) {
-        const ratio = Math.min(w / video.videoWidth, h / video.videoHeight);
-        const dw = video.videoWidth * ratio; const dh = video.videoHeight * ratio;
-        context.drawImage(video, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+        try {
+          const ratio = Math.min(w / video.videoWidth, h / video.videoHeight);
+          const dw = video.videoWidth * ratio; const dh = video.videoHeight * ratio;
+          context.drawImage(video, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+        } catch {
+          // Ignore transient frame draw errors while a remote stream is reinitializing
+        }
       }
       context.fillStyle = '#0f172acc'; context.fillRect(x + 12, y + h - 45, Math.min(w - 24, name.length * 11 + 24), 32);
       context.fillStyle = '#ffffff'; context.font = '18px sans-serif'; context.fillText(name, x + 24, y + h - 23, w - 48);
     });
   };
   const timer = setInterval(draw, 50);
-  const clear = () => { sources.forEach(s => { s.node?.disconnect(); s.gain?.disconnect(); s.video.pause(); s.video.srcObject = null; }); sources = []; };
+  let stopped = false;
+  const clear = () => {
+    sources.forEach(s => {
+      try { s.node?.disconnect(); } catch { /* ignore */ }
+      try { s.gain?.disconnect(); } catch { /* ignore */ }
+      try { s.video.pause(); s.video.srcObject = null; } catch { /* ignore */ }
+    });
+    sources = [];
+  };
   return {
     stream: output,
     update(streams: { stream: MediaStream; name: string }[]) {
+      if (stopped) return;
       clear();
-      const selected = streams.slice(0, 6);
+      const selected = streams.filter(s => s && s.stream).slice(0, 6);
       sources = selected.map(({ stream, name }) => {
-        const video = document.createElement('video'); video.muted = true; video.playsInline = true; video.srcObject = stream; void video.play().catch(() => {});
+        const video = document.createElement('video'); video.muted = true; video.playsInline = true; video.srcObject = stream; void video.play()?.catch?.(() => {});
         let node: MediaStreamAudioSourceNode | undefined; let gain: GainNode | undefined;
-        if (stream.getAudioTracks().length) {
-          node = audio.createMediaStreamSource(stream); gain = audio.createGain(); gain.gain.value = .8 / Math.sqrt(selected.length); node.connect(gain); gain.connect(destination);
+        const liveAudioTracks = typeof stream.getAudioTracks === 'function'
+          ? stream.getAudioTracks().filter(t => t.readyState !== 'ended')
+          : [];
+        if (liveAudioTracks.length > 0 && audio.state !== 'closed') {
+          try {
+            node = audio.createMediaStreamSource(new MediaStream(liveAudioTracks));
+            gain = audio.createGain();
+            gain.gain.value = .8 / Math.sqrt(selected.length);
+            node.connect(gain);
+            gain.connect(destination);
+          } catch {
+            node = undefined;
+            gain = undefined;
+          }
         }
-        return { video, name, node, gain };
+        return { video, name: name || 'Guest', node, gain };
       });
-      void audio.resume().catch(() => {});
+      if (audio.state === 'suspended') void audio.resume().catch(() => {});
       draw();
     },
-    stop() { clearInterval(timer); silence.stop(); silence.disconnect(); clear(); output.getTracks().forEach(t => t.stop()); void audio.close(); },
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(timer);
+      try { silence.stop(); } catch { /* already stopped */ }
+      try { silence.disconnect(); } catch { /* ignore */ }
+      clear();
+      output.getTracks().forEach(t => { try { t.stop(); } catch { /* ignore */ } });
+      if (audio.state !== 'closed') void audio.close().catch(() => {});
+    },
   };
 }

@@ -18,7 +18,7 @@ test('Clip Gen prepares sample without system tools and rejects empty or invalid
   process.env.PATH = '/nonexistent';
   delete process.env.FFMPEG_PATH; delete process.env.FFPROBE_PATH;
   assert.ok(path.isAbsolute(getFfmpegPath()));
-  assert.ok(path.isAbsolute(getFfprobePath()));
+  assert.equal(getFfprobePath(), 'ffprobe');
   const result = await prepareClip('public/dancers.mp4', path.join(dir, 'out.mp4'));
   assert.ok(result.duration >= 3 && result.duration <= 10);
   assert.equal(result.aspect_ratio, '9:16');

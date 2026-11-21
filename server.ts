@@ -17,7 +17,6 @@ import http from 'node:http';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
-import { createServer as createViteServer } from 'vite';
 import {
   appendChatUnique,
   getFallbackAnimalAvatar,
@@ -822,6 +821,7 @@ async function startServer() {
   });
 
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true, ...(process.env.VITE_HMR_PORT ? { hmr: { port: Number(process.env.VITE_HMR_PORT) } } : {}) },
       appType: 'spa',
