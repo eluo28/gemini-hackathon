@@ -121,10 +121,16 @@ export function GiftPanel({ roomId, recipient, initialProducts = EMPTY_PRODUCTS,
   const update = (path: string, body: unknown = {}) => run(async () => { const view = await api<GiftView>(path, body); if (mounted.current) { setState(view); setHandoffOpened(Boolean(view.checkout?.handoffOpened)); if (!view.cart) setAdded(''); if (view.cart) setCartOpen(true); } });
   const addProduct = (product: GiftProduct, mode: PurchaseMode) => {
     if (busyRef.current) return;
+    const switchingStore = Boolean(state?.cart && state.cart.shop !== product.shop && !state.checkout && !state.uncertainWrite);
+    if (switchingStore && !window.confirm('This item is from another store. Clear your current cart and switch stores?')) return;
     setCartOpen(true); setAdded('');
     setPendingPurchase({ shop: product.shop, variantId: product.variantId, mode });
     void run(async () => {
       try {
+      if (switchingStore) {
+        const cleared = await api<GiftView>('/clear', {});
+        if (mounted.current) { setState(cleared); setHandoffOpened(false); }
+      }
       const view = await api<GiftView>('/cart/add', { roomId, mode, productId: product.id, variantId: product.variantId, selected: product.selected });
       if (mounted.current) { setState(view); setProducts([]); reviewCart(); setAdded(`${product.title} added ${mode === 'self' ? 'for you' : 'as a streamer gift'}.`); }
       } catch (error) {
