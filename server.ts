@@ -1,5 +1,7 @@
-import 'dotenv/config';
 import { requireProfileOrigin } from './src/server/profileOrigin';
+import dotenv from 'dotenv';
+dotenv.config({ path: ['.env.local', '.env'] });
+import { createClipRouter } from './src/server/clipRoutes';
 import { createItemDetectionRouter } from './src/server/itemDetectionRoutes';
 import { createShopRouter } from './src/server/shopRoutes';
 import { getStreamer, saveStreamer } from './src/server/streamerProfiles';
@@ -221,6 +223,7 @@ async function startServer() {
     }
     next();
   });
+  app.use('/api/clips', createClipRouter());
   app.use('/api/shop', createItemDetectionRouter());
   app.use(express.json({ limit: '256kb' }));
   app.use('/api/shop', createShopRouter());
