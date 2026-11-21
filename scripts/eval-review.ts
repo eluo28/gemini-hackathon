@@ -17,5 +17,7 @@ app.post('/api/references',async(req,res)=>{
  try{const text=await readFile(referenceFile,'utf8');if(req.body.revision!==revision(text)){res.status(409).json({error:'References changed. Reload the page before saving.'});return;}validateReferences(req.body.references,videos);const next=JSON.stringify(req.body.references,null,2)+'\n';await writeFile(referenceFile+'.tmp',next);await rename(referenceFile+'.tmp',referenceFile);res.json({revision:revision(next)});}catch(error){res.status(400).json({error:(error as Error).message});}finally{saving=false;}
 });
 app.get('/media/:id',(req,res)=>{const video=videos.find(v=>v.id===req.params.id);if(!video){res.sendStatus(404);return;}const file=path.resolve(root,video.file);if(!file.startsWith(root+path.sep)){res.sendStatus(403);return;}res.sendFile(file);});
+app.use('/assets',express.static(path.join(root,'evals/ui/assets')));
 app.get('/',(_req,res)=>res.sendFile(path.join(root,'evals/ui/index.html')));
-app.listen(3002,'127.0.0.1',()=>console.log('Eval reference editor: http://127.0.0.1:3002 (local edits only; no Gemini calls)'));
+const port=Number(process.env.EVAL_PORT||3002);
+app.listen(port,'127.0.0.1',()=>console.log(`Eval reference editor: http://127.0.0.1:${port} (local edits only; no Gemini calls)`));
