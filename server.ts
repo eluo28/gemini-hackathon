@@ -1,3 +1,4 @@
+import { clipEvent, clipTelemetryFile } from './src/server/clipTelemetry';
 import { requireProfileOrigin } from './src/server/profileOrigin';
 import dotenv from 'dotenv';
 dotenv.config({ path: ['.env.local', '.env'] });
@@ -762,7 +763,7 @@ async function startServer() {
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, ...(process.env.VITE_HMR_PORT ? { hmr: { port: Number(process.env.VITE_HMR_PORT) } } : {}) },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -775,6 +776,7 @@ async function startServer() {
   }
 
   server.listen(PORT, '0.0.0.0', () => {
+    clipEvent('telemetry.ready', { file: clipTelemetryFile(), port: PORT });
     console.log(`ClipThat server listening on http://0.0.0.0:${PORT}`);
   });
 

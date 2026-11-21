@@ -49,12 +49,12 @@ test('automatic qualifying cuts and manual low-score captures save directly; pro
   const library = new ClipLibrary(root);
   let positive = false;
   const windows: unknown[] = [];
+  const brief = { title: 'The comeback falls short', description: 'A comeback attempt fails, followed by an immediate reaction.', summary: 'A comeback fails.', intent: 'Show the reaction.', relevant: true, beats: [{ start: 20, end: 30, description: 'The failed attempt and reaction.' }], model: 'gemini-4-hydrogen' };
   const app = express();
   app.use('/api/clips', createClipRouter(async () => {
     const p = positive ? .95 : .1;
-    const answers: ClipAnswers = Object.fromEntries(['worthy', 'arc'].map(k => [k, { type: 'noul', noul: p, confidence: .9 }]));
-    for (const k of ['viral', 'hook']) answers[k] = { type: 'score', score: p * 4, confidence: .9, probabilities: { '0': 1-p, '4': p }, legend: {} };
-    return { answers, durationSec: 60, sourceOffsetSec: 0, trim: { start: 20, end: 30 }, media: media.toString('base64'), inspection: { request: {}, response: {}, elapsedMs: 1 } };
+    const answers: ClipAnswers = { trigger_detected: { type: 'noul', noul: p, confidence: .9 } };
+    return { answers, brief, durationSec: 60, sourceOffsetSec: 0, trim: { start: 20, end: 30 }, media: media.toString('base64'), inspection: { request: {}, response: {}, elapsedMs: 1 } };
   }, async (bytes, _duration, window) => { windows.push(window); return { media: Buffer.from(bytes), durationSec: window.end ? window.end - (window.start || 0) : 60, sourceOffsetSec: 0 }; }, library));
   const server = app.listen(0, '127.0.0.1'); await new Promise<void>(r => server.once('listening', r));
   t.after(() => { server.closeAllConnections(); server.close(); });
@@ -64,23 +64,32 @@ test('automatic qualifying cuts and manual low-score captures save directly; pro
   assert.match(setCookie, /HttpOnly/); assert.match(setCookie, /SameSite=Lax/);
   const cookie = setCookie.split(';')[0];
   const request = { stage: 'judge', resolution: 'medium', durationSec: 60, targetSeconds: 60, media: media.toString('base64'), chat: [], rules: DEFAULT_RULES, capture: { id: crypto.randomUUID(), roomId: 'test', source: 'auto-trigger', startedAt: 1000, thresholds: DEFAULT_THRESHOLDS } };
-  assert.throws(() => parseClipRequest({ ...request, capture: { ...request.capture, thresholds: { ...DEFAULT_THRESHOLDS, worthy: -1 } } }));
-  const post = async (source: string, stage = 'judge') => {
-    const response = await fetch(`${base}/analyze`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ ...request, stage, capture: { ...request.capture, id: crypto.randomUUID(), source } }) });
+  assert.throws(() => parseClipRequest({ ...request, capture: { ...request.capture, thresholds: { ...DEFAULT_THRESHOLDS, trigger: -1 } } }));
+  const post = async (source: string, stage = 'judge', query?: string) => {
+    const response = await fetch(`${base}/analyze`, { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ ...request, stage, trigger: { trigger_detected: { type: 'noul', noul: positive ? .63 : .49, confidence: .8 }, trigger_type: { type: 'choice', choice: 'reaction', confidence: 1, probabilities: { reaction: 1, skill: 0, humor: 0, insight: 0, surprise: 0, none: 0 } } }, ...(query ? { query } : {}), capture: { ...request.capture, id: crypto.randomUUID(), source } }) });
     assert.equal(response.status, 200); return response.json();
   };
   assert.equal((await post('auto-trigger')).selection, 'below-threshold');
   const manual = await post('manual');
   assert.equal(manual.selection, 'saved'); assert.equal(manual.media, undefined);
   assert.equal(manual.savedClip.durationSec, 10);
+  assert.equal(manual.savedClip.title, brief.title);
+  assert.equal(manual.savedClip.description, brief.description);
   assert.deepEqual(windows.at(-1), { start: 20, end: 30 });
   assert.equal((await post('voice')).selection, 'saved');
+  const requested = await post('auto-trigger', 'judge', 'the failed comeback');
+  assert.equal(requested.selection, 'saved');
+  assert.equal(requested.savedClip.query, 'the failed comeback');
   positive = true;
   assert.equal((await post('auto-trigger')).selection, 'saved');
   assert.equal((await post('auto-probe', 'instant')).selection, 'saved');
   assert.equal((await post('auto-probe', 'probe')).savedClip, undefined);
   const list = await (await fetch(`${base}/library`, { headers: { Cookie: cookie } })).json();
-  assert.equal(list.clips.length, 4);
+  assert.equal(list.clips.length, 5);
+  const reloaded = list.clips.find((clip: SavedClip) => clip.id === manual.savedClip.id);
+  assert.equal(reloaded.title, brief.title);
+  assert.equal(reloaded.description, brief.description);
+  assert.equal((await new ClipLibrary(root).get(cookie.split('=')[1], manual.savedClip.id))?.description, brief.description);
   const fileUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}${manual.savedClip.url}`;
   const range = await fetch(fileUrl, { headers: { Cookie: cookie, Range: 'bytes=0-3' } });
   assert.equal(range.status, 206); assert.equal(Buffer.from(await range.arrayBuffer()).toString('hex'), '1a45dfa3');

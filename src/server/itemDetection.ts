@@ -1,3 +1,4 @@
+import { gemini4Model } from './geminiModels';
 import { GoogleGenAI, type GenerateContentParameters } from '@google/genai';
 
 export interface ItemFrame { mimeType: 'image/jpeg' | 'image/png' | 'image/webp'; data: string; timestampSec?: number }
@@ -64,7 +65,9 @@ export function createItemDetector(options: { apiKey?: string; model?: string; g
     if (!options.generate && (!apiKey || apiKey === 'MY_GEMINI_API_KEY')) {
       throw new ItemDetectionError('gemini_not_configured', 503, 'Item detection needs a Gemini API key on the server.');
     }
-    const model = options.model || process.env.GEMINI_ITEM_MODEL || 'gemini-3.8-flash';
+    let model: string;
+    try { model = gemini4Model('GEMINI_ITEM_MODEL', 'gemini-4-hydrogen', options.model); }
+    catch { throw new ItemDetectionError('gemini_model_config', 503, 'GEMINI_ITEM_MODEL must name a Gemini 4 model. Update the setting and restart the server.'); }
     const generate = options.generate || ((request: GenerateContentParameters) => new GoogleGenAI({ apiKey, httpOptions: { timeout: 20_000, retryOptions: { attempts: 1 } } }).models.generateContent(request));
     let result: { text?: string };
     try {

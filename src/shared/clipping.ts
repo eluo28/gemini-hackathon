@@ -3,17 +3,18 @@ import type { Decisions, GenerateContentResponseUsageMetadata } from '@google/ge
 export type ClipStage = 'probe' | 'judge' | 'instant';
 export type Resolution = 'low' | 'medium' | 'high';
 export type ClipAnswers = Record<string, Decisions.Answer>;
-export interface ClipRules { trigger: string; worthy: string; arc: string }
+export interface ClipRules { trigger: string }
 export const DEFAULT_RULES: ClipRules = {
-  trigger: 'Does this window contain a notable reaction, surprising event, impressive skill, funny moment, or useful insight worth examining as a highlight?',
-  worthy: 'Does this video contain a compelling, understandable highlight worth sharing as a short standalone clip?',
-  arc: 'Does this window contain enough setup, a clear payoff, and the immediate reaction to make a complete standalone story?',
+  trigger: 'Does this window contain a distinct sound effect (such as an air horn, applause, victory fanfare, or drum sting), a sudden or pronounced visual movement or gesture, a notable reaction, surprising event, impressive skill, funny moment, or useful insight worth examining as a highlight? Brief soundboard reactions and visible movement count even without speech or a complete story. Ordinary background noise and idle motion do not count.',
 };
-export interface ClipThresholds { trigger: number; worthy: number; arc: number; viral: number; hook: number }
-export const DEFAULT_THRESHOLDS: ClipThresholds = { trigger: .7, worthy: .7, arc: .65, viral: .6, hook: .5 };
+export interface ClipThresholds { trigger: number }
+export const DEFAULT_THRESHOLDS: ClipThresholds = { trigger: .5 };
 export interface ClipChat { name: string; text: string; offsetSec: number }
 export interface ClipRequest {
+  /** Original probe answers carried into full-context editing, never rescored. */
+  trigger?: ClipAnswers;
   stage: ClipStage;
+  query?: string;
   capture?: ClipCapture;
   resolution: Resolution;
   media: string;
@@ -23,6 +24,7 @@ export interface ClipRequest {
   rules: ClipRules;
 }
 export interface ClipResult {
+  brief?: ClipBrief;
   edit?: ClipEdit;
   savedClip?: SavedClip;
   selection?: 'saved' | 'below-threshold';
@@ -32,7 +34,27 @@ export interface ClipResult {
   sourceOffsetSec: number;
   trim: { start: number; end: number };
   media?: string;
-  inspection: { request: unknown; response: Decisions.CreateDecisionResponse; elapsedMs: number; editor?: { request: unknown; response: unknown; elapsedMs: number } };
+  inspection: { request: unknown; response: Decisions.CreateDecisionResponse; elapsedMs: number; brief?: AgentInspection; editor?: AgentInspection };
+}
+export interface AgentInspection { request: unknown; response: unknown; elapsedMs: number; steps?: { agent: 'neon' | 'hydrogen-review'; inspection: AgentInspection }[] }
+export interface ClipBrief {
+  title: string;
+  description: string;
+  summary: string;
+  intent: string;
+  relevant: boolean;
+  beats: { start: number; end: number; description: string }[];
+  model: string;
+  usage?: GenerateContentResponseUsageMetadata;
+}
+export interface ClipReview {
+  start: number;
+  end: number;
+  reason: string;
+  approved: boolean;
+  feedback: string;
+  model: string;
+  usage?: GenerateContentResponseUsageMetadata;
 }
 export interface ClipEdit {
   start: number;
@@ -40,6 +62,12 @@ export interface ClipEdit {
   reason: string;
   model: string;
   usage?: GenerateContentResponseUsageMetadata;
+  reviews?: ClipReview[];
+}
+export function shouldEditClip(request: ClipRequest, answers: ClipAnswers) {
+  if (request.stage === 'probe') return false;
+  if (request.query?.trim() || !request.capture || ['manual', 'voice', 'manual-flush'].includes(request.capture.source)) return true;
+  return qualifies(request.stage === 'judge' ? request.trigger || {} : answers, request.capture.thresholds);
 }
 export function probability(answers: ClipAnswers, key: string): number | null {
   const answer = answers[key];
@@ -48,20 +76,8 @@ export function probability(answers: ClipAnswers, key: string): number | null {
   return null;
 }
 export function qualifies(answers: ClipAnswers, thresholds: ClipThresholds): boolean {
-  return (['worthy', 'arc', 'viral', 'hook'] as const).every(key => {
-    const value = probability(answers, key);
-    return value !== null && value >= thresholds[key];
-  });
-}
-export function trimBounds(answers: ClipAnswers, duration: number) {
-  const peakAnswer = answers.peak_position;
-  const lengthAnswer = answers.best_clip_duration;
-  const peak = peakAnswer?.type === 'choice' ? Number(peakAnswer.choice.replace('p', '')) / 100 : .5;
-  const requested = lengthAnswer?.type === 'choice' ? Number(lengthAnswer.choice.replace('s', '')) : duration;
-  const length = Math.min(duration, Number.isFinite(requested) && requested > 0 ? requested : duration);
-  const center = (Number.isFinite(peak) ? peak : .5) * duration;
-  const start = Math.max(0, Math.min(duration - length, center - length * .65));
-  return { start, end: Math.min(duration, start + length) };
+  const value = probability(answers, 'trigger_detected');
+  return value !== null && value >= thresholds.trigger;
 }
 
 export interface ClipCapture {
@@ -72,6 +88,11 @@ export interface ClipCapture {
   thresholds: ClipThresholds;
 }
 export interface SavedClip {
+  // Optional for clips saved before descriptive annotations were introduced.
+  title?: string;
+  description?: string;
+  query?: string;
+  brief?: ClipBrief;
   edit?: ClipEdit;
   id: string;
   capturedAt: number;

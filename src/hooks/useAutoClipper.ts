@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { registerClipSink } from '../services/clipSink';
 import { RollingRecorder, type BufferedMedia } from '../services/rollingRecorder';
-import { createStageCapture } from '../services/stageCapture';
-import { DEFAULT_RULES, DEFAULT_THRESHOLDS, probability, type ClipResult, type ClipRules, type ClipThresholds, type ClipStage, type SavedClip } from '../shared/clipping';
+import { createStageCapture, type SubscribeRelayAudio } from '../services/stageCapture';
+import { DEFAULT_RULES, DEFAULT_THRESHOLDS, probability, type ClipAnswers, type ClipResult, type ClipRules, type ClipThresholds, type ClipStage, type SavedClip } from '../shared/clipping';
 import type { ChatMessage, RoomParticipant } from '../utils/types';
 
+const clipDebug = (event: string, fields: Record<string, unknown> = {}) => {
+  if (import.meta.env.DEV) console.debug('[clipping]', { timestamp: new Date().toISOString(), event, ...fields });
+};
+
 export interface ImportableClip { id: string; runId: string; clipId: number; title: string; start: number; end: number }
-interface Options { active: boolean; roomId: string; localStream: MediaStream | null; remoteStreams: Record<string, MediaStream>; participants: RoomParticipant[]; selfName: string; messages: ChatMessage[] }
+interface Options { soundboardPlaying?: boolean; active: boolean; roomId: string; localStream: MediaStream | null; remoteStreams: Record<string, MediaStream>; remoteRelayFrames?: Record<string, string>; subscribeRelayAudio?: SubscribeRelayAudio; participants: RoomParticipant[]; selfId?: string | null; selfName: string; messages: ChatMessage[] }
 export async function toBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(new Error('Could not read recording.')); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.readAsDataURL(blob); });
 }
@@ -16,6 +20,7 @@ export function useAutoClipper(options: Options) {
   const [deepJudge, setDeepJudge] = useState(true);
   const [intervalSec, setIntervalSec] = useState(15);
   const [resolution, setResolution] = useState<'medium' | 'high'>('medium');
+  const [query, setQuery] = useState('');
   const [rules, setRules] = useState<ClipRules>(DEFAULT_RULES);
   const [thresholds, setThresholds] = useState<ClipThresholds>(DEFAULT_THRESHOLDS);
   const [queue, setQueue] = useState<SavedClip[]>([]);
@@ -32,14 +37,14 @@ export function useAutoClipper(options: Options) {
   const ready = libraryLoaded && !!status?.configured && !!status?.mediaReady;
   const recorder = useRef<RollingRecorder | null>(null);
   const capture = useRef<ReturnType<typeof createStageCapture> | null>(null);
-  const latestConfig = useRef({ options, includeChat, deepJudge, resolution, rules, thresholds });
-  latestConfig.current = { options, includeChat, deepJudge, resolution, rules, thresholds };
+  const latestConfig = useRef({ options, includeChat, deepJudge, resolution, rules, thresholds, query });
+  latestConfig.current = { options, includeChat, deepJudge, resolution, rules, thresholds, query };
   const generation = useRef(0);
   const inFlight = useRef(false);
   const controller = useRef<AbortController | null>(null);
-  const pending = useRef<{ deadline: number; source: string } | null>(null);
+  const pending = useRef<{ deadline: number; source: string; trigger?: ClipAnswers } | null>(null);
   const pendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastTrigger = useRef(0);
+  const soundboardTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshLibrary = useCallback(async () => {
     try {
       const response = await fetch('/api/clips/library');
@@ -58,7 +63,10 @@ export function useAutoClipper(options: Options) {
   }, [refreshLibrary]);
 
   const cancelSession = useCallback(() => {
-    generation.current++; lastTrigger.current = 0; controller.current?.abort(); controller.current = null;
+    clipDebug('session.cancelled', { generation: generation.current });
+    if (soundboardTimer.current) clearTimeout(soundboardTimer.current);
+    soundboardTimer.current = null;
+    generation.current++; controller.current?.abort(); controller.current = null;
     pending.current = null; if (pendingTimer.current) clearTimeout(pendingTimer.current);
     inFlight.current = false; setBusy(false);
   }, []);
@@ -76,64 +84,107 @@ export function useAutoClipper(options: Options) {
 
   useEffect(() => {
     if (!capture.current || !options.localStream) return;
-    capture.current.update([{ stream: options.localStream, name: options.selfName || 'You' }, ...Object.entries(options.remoteStreams).map(([id, stream]) => ({ stream, name: options.participants.find(p => p.id === id)?.name || 'Guest' }))]);
-  }, [options.localStream, options.remoteStreams, options.participants, options.selfName, options.active, options.roomId]);
+    const self = options.participants.find(p => p.id === options.selfId);
+    const peerIds = new Set([...options.participants.filter(p => p.role !== 'viewer').map(p => p.id), ...Object.keys(options.remoteStreams)]);
+    if (options.selfId) peerIds.delete(options.selfId);
+    capture.current.update([
+      { id: options.selfId || 'local', stream: options.localStream, name: options.selfName || 'You', videoEnabled: self ? self.videoEnabled || self.screenSharing : undefined },
+      ...[...peerIds].filter(id => options.participants.find(p => p.id === id)?.role !== 'viewer').map(id => {
+        const peer = options.participants.find(p => p.id === id);
+        return { id, stream: options.remoteStreams[id], name: peer?.name || 'Guest', videoEnabled: peer ? peer.videoEnabled || peer.screenSharing : undefined };
+      }),
+    ]);
+  }, [options.localStream, options.remoteStreams, options.participants, options.selfId, options.selfName, options.active, options.roomId]);
+  useEffect(() => {
+    capture.current?.updateRelayFrames(options.remoteRelayFrames || {});
+  }, [options.remoteRelayFrames, options.participants, options.active, options.roomId, !!options.localStream]);
+  useEffect(() => options.subscribeRelayAudio?.((id, pcm16, rate) => {
+    capture.current?.addRelayAudio(id, pcm16, rate);
+  }), [options.subscribeRelayAudio]);
 
-  const analyze = useCallback(async (media: BufferedMedia, stage: ClipStage, source: string, token: number) => {
+  const analyze = useCallback(async (media: BufferedMedia, stage: ClipStage, source: string, token: number, trigger?: ClipAnswers) => {
     if (token !== generation.current) return null;
     const c = latestConfig.current;
     const chat = c.includeChat ? c.options.messages.filter(m => m.timestamp >= media.startedAt && m.timestamp <= media.endedAt).slice(-100).map(m => ({ name: m.senderName.slice(0, 80), text: m.text.slice(0, 1000), offsetSec: (m.timestamp - media.startedAt) / 1000 })) : [];
+    const captureId = crypto.randomUUID();
+    const started = performance.now();
+    clipDebug('analysis.started', { traceId: captureId, stage, source, durationSec: media.durationSec, mediaBytes: media.blob.size });
     const abort = new AbortController(); controller.current = abort;
-    const timeout = setTimeout(() => abort.abort(), 240_000);
+    const timeout = setTimeout(() => abort.abort(), 420_000);
     try {
-      const response = await fetch('/api/clips/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: abort.signal, body: JSON.stringify({ stage, resolution: stage === 'judge' ? c.resolution : 'low', media: await toBase64(media.blob), durationSec: media.durationSec, targetSeconds: stage === 'judge' ? 60 : 15, chat, rules: c.rules, capture: { id: crypto.randomUUID(), roomId: c.options.roomId, source, startedAt: media.startedAt, thresholds: c.thresholds } }) });
+      const response = await fetch('/api/clips/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Request-ID': captureId }, signal: abort.signal, body: JSON.stringify({ stage, trigger, resolution: stage === 'judge' ? c.resolution : 'low', media: await toBase64(media.blob), durationSec: media.durationSec, targetSeconds: stage === 'judge' ? 60 : 15, chat, rules: c.rules, ...(['manual', 'voice', 'manual-flush'].includes(source) && c.query.trim() ? { query: c.query.trim() } : {}), capture: { id: captureId, roomId: c.options.roomId, source, startedAt: media.startedAt, thresholds: c.thresholds } }) });
       const result = await response.json() as ClipResult & { error?: string };
-      if (!response.ok) throw new Error(result.error || 'Clip analysis failed.');
+      clipDebug('analysis.response', { traceId: response.headers.get('X-Request-ID') || captureId, status: response.status, elapsedMs: Math.round(performance.now() - started), selection: result.selection, savedClipId: result.savedClip?.id });
+      if (!response.ok) throw new Error(`${result.error || 'Clip analysis failed.'}${response.headers.has('X-Request-ID') ? ` (trace ${response.headers.get('X-Request-ID')})` : ''}`);
       if (token !== generation.current) return null;
       const { media: video, ...metadata } = result;
       setLatest(metadata);
       setHistory(old => [{ id: crypto.randomUUID(), stage, result: metadata }, ...old].slice(0, 20));
       if (result.savedClip) setQueue(old => [result.savedClip!, ...old.filter(clip => clip.id !== result.savedClip!.id)]);
       return result;
+    } catch (error) {
+      clipDebug('analysis.failed', { traceId: captureId, elapsedMs: Math.round(performance.now() - started), error: (error as Error).message });
+      throw error;
     } finally { clearTimeout(timeout); }
   }, []);
 
-  const run = useCallback(async (stage: ClipStage, source: string) => {
-    if (!ready || !recorder.current || recorder.current.bufferedSeconds < 1 || inFlight.current) return null;
-    const token = generation.current; inFlight.current = true; setBusy(true); setError(''); setPhase(stage === 'probe' ? 'Probing' : 'Judging');
+  const run = useCallback(async (stage: ClipStage, source: string, trigger?: ClipAnswers) => {
+    if (!ready || !recorder.current || recorder.current.bufferedSeconds < 1 || inFlight.current) { clipDebug('capture.skipped', { ready, hasRecorder: !!recorder.current, bufferedSeconds: recorder.current?.bufferedSeconds, inFlight: inFlight.current, source }); return null; }
+    const token = generation.current; inFlight.current = true; setBusy(true); setError(''); setPhase(stage === 'probe' ? 'Probing' : 'Preparing clip');
     try {
       const media = await recorder.current.snapshot(stage === 'judge' ? 60 : 15);
-      const result = await analyze(media, stage, source, token);
+      const result = await analyze(media, stage, source, token, trigger);
       return result ? { result, endedAt: media.endedAt } : null;
     }
     catch (e) { if (token === generation.current) { setError((e as Error).name === 'AbortError' ? 'Analysis timed out. Retry manually.' : (e as Error).message); setAutoProbe(false); } return null; }
     finally { if (token === generation.current) { inFlight.current = false; setBusy(!!pending.current); setPhase(pending.current ? 'Post-roll' : 'Buffering'); } }
   }, [analyze, ready]);
 
-  const flush = useCallback((source = 'manual', triggeredAt = Date.now()) => {
-    if (!ready || !recorder.current || recorder.current.bufferedSeconds < 1 || pending.current) return;
+  const flush = useCallback((source = 'manual', triggeredAt = Date.now(), trigger?: ClipAnswers) => {
+    if (!ready || !recorder.current || recorder.current.bufferedSeconds < 1 || pending.current) { clipDebug('trigger.skipped', { ready, hasRecorder: !!recorder.current, bufferedSeconds: recorder.current?.bufferedSeconds, pending: !!pending.current, source }); return; }
     const token = generation.current;
     // API latency already contributed post-roll after the probed window ended.
     const delay = latestConfig.current.deepJudge ? Math.max(0, triggeredAt + 10_000 - Date.now()) : 0;
-    pending.current = { deadline: Date.now() + delay, source }; setBusy(true); setPhase(delay ? `Post-roll · ${Math.ceil(delay / 1000)}s` : 'Waiting for current analysis');
+    clipDebug('trigger.scheduled', { source, postRollMs: delay, inFlight: inFlight.current });
+    pending.current = { deadline: Date.now() + delay, source, trigger }; setBusy(true); setPhase(delay ? `Post-roll · ${Math.ceil(delay / 1000)}s` : 'Waiting for current analysis');
     const captureWhenReady = () => {
       if (token !== generation.current || !pending.current) return;
       if (inFlight.current) { pendingTimer.current = setTimeout(captureWhenReady, 250); return; }
       const job = pending.current; pending.current = null;
-      void run('judge', job.source);
+      void run('judge', job.source, job.trigger);
     };
     pendingTimer.current = setTimeout(captureWhenReady, delay);
   }, [run, ready]);
   const probe = useCallback(async () => {
-    if (pending.current || inFlight.current || !recorder.current) return;
+    if (pending.current || inFlight.current || !recorder.current || latestConfig.current.options.soundboardPlaying) return;
     const stage = latestConfig.current.deepJudge ? 'probe' : 'instant';
     const token = generation.current;
     const outcome = await run(stage, 'auto-probe');
     if (token !== generation.current || !outcome || stage !== 'probe') return;
-    if ((probability(outcome.result.answers, 'trigger_detected') ?? 0) >= latestConfig.current.thresholds.trigger && outcome.endedAt - lastTrigger.current >= 30_000) {
-      lastTrigger.current = outcome.endedAt; flush('auto-trigger', outcome.endedAt);
+    if ((probability(outcome.result.answers, 'trigger_detected') ?? 0) >= latestConfig.current.thresholds.trigger) {
+      flush('auto-trigger', outcome.endedAt, outcome.result.answers);
     }
   }, [run, flush]);
+  // Check recorded sound with the real detector, preserving its scores and thresholds.
+  const detectSoundboard = useCallback(() => {
+    if (!ready || !recorder.current) return;
+    if (soundboardTimer.current) clearTimeout(soundboardTimer.current);
+    const token = generation.current;
+    const deadline = Date.now() + 10_000;
+    const check = () => {
+      soundboardTimer.current = null;
+      if (token !== generation.current || !recorder.current) return;
+      if (pending.current) return; // An already-triggered full judge includes this moment.
+      if (inFlight.current) {
+        if (Date.now() < deadline) soundboardTimer.current = setTimeout(check, 250);
+        else setError('Detection is still busy. Play the sound again after it finishes.');
+        return;
+      }
+      clipDebug('soundboard.detect');
+      void probe();
+    };
+    soundboardTimer.current = setTimeout(check, 350);
+  }, [probe, ready]);
   useEffect(() => { if (!autoProbe || !recording || !ready) return; const timer = setInterval(() => void probe(), intervalSec * 1000); return () => clearInterval(timer); }, [autoProbe, recording, ready, intervalSec, probe]);
   useEffect(() => {
     registerClipSink({ name: 'gemini-decisions', onClipMarked: ({ marker }) => { if (marker.roomId === latestConfig.current.options.roomId && latestConfig.current.options.active) flush(marker.source); } });
@@ -155,5 +206,5 @@ export function useAutoClipper(options: Options) {
       setImports(old => old.filter(c => c.runId !== entry.runId || c.clipId !== entry.clipId));
     } catch (e) { setError((e as Error).message); }
   };
-  return { autoProbe, setAutoProbe, includeChat, setIncludeChat, deepJudge, setDeepJudge, intervalSec, setIntervalSec, resolution, setResolution, setRules, rules, thresholds, setThresholds, queue, history, latest, error, setError, phase, bufferedSeconds, recording, busy, status, ready, probe, flush, remove, imports: imports.filter(entry => !queue.some(clip => clip.id === entry.id)), importClip, libraryLoaded };
+  return { query, setQuery, autoProbe, setAutoProbe, includeChat, setIncludeChat, deepJudge, setDeepJudge, intervalSec, setIntervalSec, resolution, setResolution, setRules, rules, thresholds, setThresholds, queue, history, latest, error, setError, phase, bufferedSeconds, recording, busy, status, ready, probe, flush, remove, imports: imports.filter(entry => !queue.some(clip => clip.id === entry.id)), importClip, libraryLoaded, detectSoundboard };
 }

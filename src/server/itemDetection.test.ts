@@ -17,9 +17,9 @@ test('frame input rejects URLs, MIME mismatches, oversized payloads, invalid tim
 
 test('Gemini request contains image bytes and schema; response uses caller timestamp and stays a similar-item discovery', async () => {
   let calls = 0;
-  const detect = createItemDetector({ model: 'test-model', generate: async request => {
+  const detect = createItemDetector({ model: 'gemini-4-hydrogen', generate: async request => {
     calls++;
-    assert.equal(request.model, 'test-model');
+    assert.equal(request.model, 'gemini-4-hydrogen');
     assert.equal(request.config?.responseMimeType, 'application/json');
     assert.ok(request.config?.responseJsonSchema);
     assert.match(String(request.config?.systemInstruction), /untrusted scene data/);
