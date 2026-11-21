@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AutoClipper, LiveClipsPanel, MyClipsPage } from './components/AutoClipper';
+import { ClipGenPage } from './components/ClipGenPage';
+import { Viewer3DPage } from './components/Viewer3DPage';
 import { useAutoClipper } from './hooks/useAutoClipper';
 import { JoinStreamGate } from './components/JoinStreamGate';
 import { LiveChatPanel } from './components/LiveChatPanel';
@@ -41,6 +43,11 @@ async function copyTextReliable(text: string): Promise<boolean> {
 }
 
 export default function App() {
+  if (window.location.pathname === '/3d') return <Viewer3DPage />;
+  return window.location.pathname === '/clip-gen' ? <ClipGenPage /> : <StudioApp />;
+}
+
+function StudioApp() {
   const studio = useStudioRoom(getInitialRoomFromUrl());
   const clipper = useAutoClipper({ active: studio.hasJoined && studio.isLive && studio.selfRole !== 'viewer', roomId: studio.roomId, localStream: studio.localStream, remoteStreams: studio.remoteStreams, participants: studio.participants, selfName: studio.selfName, messages: studio.chatMessages });
   const [showMyClips, setShowMyClips] = useState(new URLSearchParams(window.location.search).get('view') === 'clips');
