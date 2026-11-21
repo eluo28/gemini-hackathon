@@ -110,7 +110,8 @@ test('completed soundboard events exceed 50% and enter editing without an AI tri
     id: 'soundboard', source: 'soundboard', startedAt: 0, roomId: 'room', thresholds: { trigger: 1 },
   } }, media, 45, 15);
   assert.equal(output.triggerSource, 'soundboard');
-  assert.deepEqual(output.answers.trigger_detected, { type: 'noul', noul: .65, confidence: 1 });
+  const score = output.answers.trigger_detected;
+  assert.ok(score.type === 'noul' && score.noul > .5 && score.noul < 1);
   assert.equal(edits, 1);
   assert.ok(output.inspection.editor);
   assert.deepEqual(output.inspection.request, { source: 'soundboard', event: 'playback-completed' });

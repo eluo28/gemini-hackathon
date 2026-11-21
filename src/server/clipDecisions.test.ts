@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import type { Decisions } from '@google/genai';
 import { buildQuestions, createDecisionJudge, parseClipRequest, validateAnswers } from './clipDecisions';
 import { createClipRouter } from './clipRoutes';
-import { DEFAULT_RULES, DEFAULT_THRESHOLDS, qualifies, type ClipRequest } from '../shared/clipping';
+import { DEFAULT_RULES, DEFAULT_THRESHOLDS, qualifies, soundboardTrigger, type ClipRequest } from '../shared/clipping';
 const media = Buffer.concat([Buffer.from('1a45dfa3', 'hex'), Buffer.alloc(20)]);
 const request: ClipRequest = { stage: 'judge', resolution: 'medium', durationSec: 60, targetSeconds: 60, media: media.toString('base64'), chat: [], rules: DEFAULT_RULES };
 // Contract fixtures live only in tests. No fallback scores exist in the application.
@@ -96,4 +96,19 @@ test('soundboard captures are accepted only for full-context editing', () => {
   const capture = { id: '12345678-1234-1234-1234-123456789abc', source: 'soundboard', startedAt: 0, roomId: 'room', thresholds: DEFAULT_THRESHOLDS };
   assert.equal(parseClipRequest({ ...request, capture }).capture?.source, 'soundboard');
   for (const stage of ['probe', 'instant']) assert.throws(() => parseClipRequest({ ...request, capture, stage }));
+});
+
+test('soundboard scores vary from 51 to 99 percent and survive request parsing', t => {
+  const random = t.mock.method(Math, 'random', () => 0);
+  const low = soundboardTrigger(45);
+  random.mock.mockImplementation(() => .999999);
+  const high = soundboardTrigger(45);
+  assert.deepEqual(low.answers.trigger_detected, { type: 'noul', noul: .51, confidence: 1 });
+  assert.deepEqual(high.answers.trigger_detected, { type: 'noul', noul: .99, confidence: 1 });
+  const parsed = parseClipRequest({ ...request, trigger: high.answers, capture: {
+    id: '12345678-1234-1234-1234-123456789abc', source: 'soundboard',
+    startedAt: 0, roomId: 'room', thresholds: { trigger: .7 },
+  } });
+  assert.deepEqual(parsed.capture?.thresholds, { trigger: .5 });
+  assert.deepEqual(soundboardTrigger(45, 0, parsed.trigger).answers, high.answers);
 });

@@ -8,7 +8,7 @@ export const DEFAULT_RULES: ClipRules = {
   trigger: 'Does this window contain a distinct sound effect (such as an air horn, applause, victory fanfare, or drum sting), a sudden or pronounced visual movement or gesture, a notable reaction, surprising event, impressive skill, funny moment, or useful insight worth examining as a highlight? Brief soundboard reactions and visible movement count even without speech or a complete story. Ordinary background noise and idle motion do not count.',
 };
 export interface ClipThresholds { trigger: number }
-export const DEFAULT_THRESHOLDS: ClipThresholds = { trigger: .5 };
+export const DEFAULT_THRESHOLDS: Readonly<ClipThresholds> = Object.freeze({ trigger: .5 });
 export interface ClipChat { name: string; text: string; offsetSec: number }
 export interface ClipRequest {
   /** Original probe answers carried into full-context editing, never rescored. */
@@ -38,10 +38,10 @@ export interface ClipResult {
   inspection: { request: unknown; response: Decisions.CreateDecisionResponse; elapsedMs: number; brief?: AgentInspection; editor?: AgentInspection };
 }
 // A completed playback is an observed app event, not a model probability.
-export function soundboardTrigger(durationSec: number, sourceOffsetSec = 0): ClipResult {
+export function soundboardTrigger(durationSec: number, sourceOffsetSec = 0, trigger?: ClipAnswers): ClipResult {
   return {
     triggerSource: 'soundboard',
-    answers: { trigger_detected: { type: 'noul', noul: .65, confidence: 1 } },
+    answers: trigger || { trigger_detected: { type: 'noul', noul: (51 + Math.floor(Math.random() * 49)) / 100, confidence: 1 } },
     durationSec, sourceOffsetSec, trim: { start: 0, end: durationSec },
     inspection: { request: { source: 'soundboard', event: 'playback-completed' }, response: {}, elapsedMs: 0 },
   };
@@ -77,7 +77,7 @@ export interface ClipEdit {
 export function shouldEditClip(request: ClipRequest, answers: ClipAnswers) {
   if (request.stage === 'probe') return false;
   if (request.query?.trim() || !request.capture || ['manual', 'voice', 'manual-flush', 'soundboard'].includes(request.capture.source)) return true;
-  return qualifies(request.stage === 'judge' ? request.trigger || {} : answers, request.capture.thresholds);
+  return qualifies(request.stage === 'judge' ? request.trigger || {} : answers, DEFAULT_THRESHOLDS);
 }
 export function probability(answers: ClipAnswers | undefined, key: string): number | null {
   const answer = answers?.[key];

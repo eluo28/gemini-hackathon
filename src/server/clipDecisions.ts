@@ -14,13 +14,13 @@ export function parseClipRequest(value: unknown): ClipRequest {
   decodeWebm(v.media);
   if (!v.rules || (Object.keys(DEFAULT_RULES) as (keyof typeof DEFAULT_RULES)[]).some(key => typeof v.rules[key] !== 'string' || !v.rules[key].trim() || v.rules[key].length > 2000)) throw new ClipError('Each rule must contain 1–2,000 characters.');
   if (!Array.isArray(v.chat) || v.chat.length > 100 || v.chat.some(c => !c || typeof c.name !== 'string' || c.name.length > 80 || typeof c.text !== 'string' || c.text.length > 1000 || !Number.isFinite(c.offsetSec) || c.offsetSec < 0 || c.offsetSec > v.durationSec)) throw new ClipError('Invalid timestamped chat context.');
-  if (v.trigger !== undefined) validateAnswers({ answers: v.trigger, usage: { total_output_tokens: 0 } }, buildQuestions('probe'));
+  if (v.trigger !== undefined) validateAnswers({ answers: v.trigger, usage: { total_output_tokens: 0 } }, v.capture?.source === 'soundboard' ? { trigger_detected: buildQuestions('probe').trigger_detected } : buildQuestions('probe'));
   if (v.capture) {
     const c = v.capture;
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(c.id) || typeof c.roomId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(c.roomId) || !['manual','voice','manual-flush','soundboard','auto-trigger','auto-probe'].includes(c.source) || !Number.isFinite(c.startedAt) || c.startedAt < 0 || !c.thresholds || (Object.keys(DEFAULT_THRESHOLDS) as (keyof typeof DEFAULT_THRESHOLDS)[]).some(k => !Number.isFinite(c.thresholds[k]) || c.thresholds[k] < 0 || c.thresholds[k] > 1)) throw new ClipError('Invalid clip capture metadata.');
   }
   if (v.capture?.source === 'soundboard' && v.stage !== 'judge') throw new ClipError('Soundboard events must use the editing stage.');
-  return { ...v, ...(v.query ? { query: v.query.trim() } : {}), resolution: v.stage === 'judge' ? v.resolution : 'low' };
+  return { ...v, ...(v.capture ? { capture: { ...v.capture, thresholds: DEFAULT_THRESHOLDS } } : {}), ...(v.query ? { query: v.query.trim() } : {}), resolution: v.stage === 'judge' ? v.resolution : 'low' };
 }
 export function decodeWebm(data: unknown) {
   if (typeof data !== 'string' || data.length > Math.ceil(MAX_MEDIA_BYTES / 3) * 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data) || data.length % 4 !== 0) throw new ClipError('Expected a WebM recording of at most 16 MB.');

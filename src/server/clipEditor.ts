@@ -79,14 +79,14 @@ export function createClipAnalyzer(judge = createDecisionJudge(), editor = creat
     // "judge" is the existing full-context endpoint stage. The initial probe is
     // now the only selection decision; this stage goes directly to editing.
     const result: ClipResult = request.stage === 'judge' && request.capture?.source === 'soundboard' ? {
-      ...soundboardTrigger(durationSec, sourceOffsetSec), media: media.toString('base64'),
+      ...soundboardTrigger(durationSec, sourceOffsetSec, request.trigger), media: media.toString('base64'),
     } : request.stage === 'judge' ? {
       answers: request.trigger || {}, durationSec, sourceOffsetSec,
       trim: { start: 0, end: durationSec }, media: media.toString('base64'),
       inspection: { request: { stage: 'edit', reusedTrigger: !!request.trigger }, response: { answers: request.trigger || {} }, elapsedMs: 0 },
     } : await clipSpan('trigger', { analysisStage: request.stage }, () => judge(...args));
     const eligible = shouldEditClip(request, result.answers);
-    const thresholds = request.capture?.thresholds || DEFAULT_THRESHOLDS;
+    const thresholds = DEFAULT_THRESHOLDS;
     const triggerScore = probability(result.answers, 'trigger_detected');
     const failedThresholds = !eligible && request.stage !== 'probe' ? ['trigger'] : [];
     clipEvent('edit.eligibility', { eligible, stage: request.stage, source: request.capture?.source, hasQuery: !!request.query, thresholds, triggerScore, failedThresholds, reason: request.stage === 'probe' ? 'probe-only' : eligible ? 'selected-for-editing' : 'below-threshold' });

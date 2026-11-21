@@ -22,7 +22,7 @@ export function useAutoClipper(options: Options) {
   const [resolution, setResolution] = useState<'medium' | 'high'>('medium');
   const [query, setQuery] = useState('');
   const [rules, setRules] = useState<ClipRules>(DEFAULT_RULES);
-  const [thresholds, setThresholds] = useState<ClipThresholds>(DEFAULT_THRESHOLDS);
+  const thresholds = DEFAULT_THRESHOLDS;
   const [queue, setQueue] = useState<SavedClip[]>([]);
   const [history, setHistory] = useState<{ id: string; stage: ClipStage; result: ClipResult }[]>([]);
   const [latest, setLatest] = useState<ClipResult | null>(null);
@@ -185,7 +185,7 @@ export function useAutoClipper(options: Options) {
       setLatest(result);
       setHistory(old => [{ id: crypto.randomUUID(), stage: 'probe' as const, result }, ...old].slice(0, 20));
       clipDebug('soundboard.trigger', { signal: probability(result.answers, 'trigger_detected') });
-      flush('soundboard', triggeredAt);
+      flush('soundboard', triggeredAt, result.answers);
     };
     soundboardTimer.current = setTimeout(check, 350);
   }, [flush, ready]);
@@ -210,5 +210,5 @@ export function useAutoClipper(options: Options) {
       setImports(old => old.filter(c => c.runId !== entry.runId || c.clipId !== entry.clipId));
     } catch (e) { setError((e as Error).message); }
   };
-  return { query, setQuery, autoProbe, setAutoProbe, includeChat, setIncludeChat, deepJudge, setDeepJudge, intervalSec, setIntervalSec, resolution, setResolution, setRules, rules, thresholds, setThresholds, queue, history, latest, error, setError, phase, bufferedSeconds, recording, busy, status, ready, probe, flush, remove, imports: imports.filter(entry => !queue.some(clip => clip.id === entry.id)), importClip, libraryLoaded, detectSoundboard };
+  return { query, setQuery, autoProbe, setAutoProbe, includeChat, setIncludeChat, deepJudge, setDeepJudge, intervalSec, setIntervalSec, resolution, setResolution, setRules, rules, thresholds, queue, history, latest, error, setError, phase, bufferedSeconds, recording, busy, status, ready, probe, flush, remove, imports: imports.filter(entry => !queue.some(clip => clip.id === entry.id)), importClip, libraryLoaded, detectSoundboard };
 }
