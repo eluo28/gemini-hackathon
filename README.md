@@ -359,102 +359,83 @@ Use `npm run eval:run -- --all` for the full dataset. See [evals/README.md](eval
 for metrics, held-out splits, reference review, and run comparison. The imported
 Wimbledon suggestion starts as a draft; quality metrics require reviewed references.
 
-## Viewer product gifting (local branch)
+## Stream shopping and product gifts
 
-No wishlist is needed. A creator enables gifts with a saved delivery address;
-viewers ask about an object in the stream, choose a matching product and size/color, add items
-to a single-merchant cart, connect Shop, and review the full merchant checkout.
-The viewer selects an offered payment method and explicitly confirms the store,
-items, quantities, current total and recipient before payment is submitted.
+Connect Shop from **Show Shop** in the right-hand **Chat** tab, then send a
+message such as `@shop find that mug`. The command appears in room chat; product
+results and checkout are private to the viewer. Disconnected requests show a
+connection prompt and do not run Gemini. The Shop panel and its top **Cart**
+dropdown collapse independently; cart controls never contain the conversation.
 
-Product discovery, cart operations, delivery options, checkout and eligible
-payment completion use Shop MCP from the backend. Shop sign-in opens a Shop page.
-If checkout requires a hosted step, **Finish required step on Shop** opens the
-returned checkout URL; refresh its status in the app afterwards. In-app payment
-is blocked once hosted checkout is opened, to avoid parallel submissions.
+Each submitted question freezes a visible live frame (up to 960×540). Gemini
+Hydrogen identifies at most two requested objects with bounding boxes. The
+browser crops those objects from the same frame, and Shop MCP searches by image
+similarity and description. Up to three product cards are shown. There are no
+background Gemini scans or polling timers. The assistant ignores avatars and the
+local synthetic standby feed. Frames/crops are not stored; catalog results are
+not cached or rehosted. Each question uses a fresh frame, without sending prior
+chat as model conversation history.
 
-The streamer address is read from server-owned creator settings, not supplied by
-the viewer. In-app completion requires checkout to echo the selected streamer
-address and cover all line items with shipping. If a merchant rejects or omits
-that destination, payment remains disabled. Only a completed checkout with an
-order and verified gift recipient generates a room-wide gift alert. Merchant
-support for a viewer-funded third-party recipient still requires a real Shop
-checkout test; local fixtures do not establish that support.
+Product actions add an exact, freshly revalidated variant to a real Shop cart:
 
-### Local testing
+- **Gift to streamer** uses the creator's private saved delivery address. The
+  creator opts into gifts through **Edit profile** below the video and controls.
+- **Buy for myself** uses the connected buyer's preferred Shop delivery address
+  at checkout. Missing saved delivery details require merchant checkout.
 
-Run the normal local server with a Gemini API key, join as a host, turn on a
-camera or screen share, and go live. In **Ask about this stream**, ask about a
-visible object. Choose **Gift this item** from a returned product card, then
-review options and add it to the gift cart. A viewer tab can ask independently.
-No Gemini or catalog calls happen until a question is submitted.
+One cart belongs to one store, room, and purchase mode. Switching between gifts
+and personal purchases requires finishing or explicitly clearing the current
+cart. The badge reflects the authoritative cart read back after a mutation.
+Errors and merchant notices remain visible; an empty cart is not reported as a
+successful addition.
 
-For isolated cart/payment fixtures, the existing `npm run dev:gifting-demo`
-command still provides simulated backend operations and rejects production use.
-It does not simulate the new stream assistant or real product recognition; use
-the targeted tests for that fixture flow. Do not treat those results as real
-Shop payment validation. The primary UI test path now uses real Shop mode.
+### Checkout behavior and limits
 
-### Real Shop mode
+Discovery and basket operations use anonymous Shop MCP requests from the server;
+account and checkout requests use the connected buyer. Checkout uses
+`allenlu378@gmail.com` as the prototype's configured contact email, including a
+follow-up full-document update when the merchant ignores contact during creation.
+There is no contact-email input in the UI.
 
-Run the normal `npm run dev` (without `GIFTING_DEMO_MODE`) to call real Shop MCP.
-No Gemini key is needed for manual gift search. The prototype uses Shop's public
-OAuth device client, so sign-in needs no client secret. For a distributed app,
-configure a registered `SHOP_OAUTH_CLIENT_ID` (and secret when required) enabled
-for `personal_agent` and the `https://mcp.shop.com` resource.
+The viewer reviews returned items, quantities, delivery choices, total and
+recipient, selects an offered payment method, and explicitly confirms before
+payment. In-app completion requires `ready_for_complete` and a verified delivery
+destination covering all line items. Only a completed checkout with an order and
+verified streamer destination generates a room-wide gift alert. Personal orders
+never generate gift alerts. Live in-app payment completion has not been verified.
 
-Buyer tokens and keyed cart/checkout resources stay server-side. Browser cookies
-are HttpOnly/SameSite and Secure in production. Each browser session has one gift
-cart, bound to one creator and merchant. Full-document updates preserve unknown
-merchant fields. Changed totals/items/payment identity require another review.
-Payment completion is never retried: a durable file of hashed checkout identities
-records attempts before submission, while uncertain outcomes are reconciled only
-with reads. No raw card credentials are saved or returned to the browser.
+Shop can require a merchant-hosted step or reject a delivery destination. The UI
+preserves notices and links to the returned merchant checkout. Stores confirmed
+to require merchant checkout are hidden from subsequent discovery in that
+browser. This is a learned exclusion, not a guarantee that new stores support
+in-app completion: search does not expose a reliable checkout-eligibility filter.
 
-This remains a single-process hackathon prototype. Creator ownership uses the
-existing first-claim browser cookie. Buyer sessions are in memory and expire after
-24 hours; restart loses session/cart access, and the UI instructs users to check
-any submitted order before starting another purchase. Production use needs real
-creator authentication and a shared secure session/transaction store. Do not log
-Shop tokens, checkout IDs/URLs, payment instruments or recipient addresses.
+Cart quantities can change before payment or merchant handoff, invalidating the
+old checkout review. Opening merchant checkout locks parallel in-app payment and
+cart edits. After declining and closing the merchant page, the explicit
+**I declined—clear local cart** action checks status and clears the local cart;
+it refuses known processing/completed orders. If Shop's read fails, it records an
+unverified retired checkout and explains that clearing locally does not cancel or
+refund a merchant order. No payment is automatically resubmitted.
 
+### Setup and local testing
 
-## Ask about an object in the live stream
+Run `npm run dev` with `GEMINI_API_KEY` in the ignored server environment file;
+`GEMINI_ITEM_MODEL` defaults to `gemini-4-hydrogen`. Join as host, enable a camera
+or screen share and go live. A separate viewer can connect Shop, submit an
+`@shop` message, and test gifts or personal cart additions. Gemini is called only
+when a question is submitted. No wishlist or seeded creator is required.
 
-The live stage now has an **Ask about this stream** chat panel. Viewers can ask
-“What is that mug in the background?” and select a broadcaster if multiple people
-are on stage. There are no background Gemini requests or polling timers.
+Shop sign-in uses the public prototype OAuth device client by default. Distributed
+apps should configure a registered `SHOP_OAUTH_CLIENT_ID` (and secret when needed)
+with `personal_agent` and the `https://mcp.shop.com` resource. The optional
+`npm run dev:gifting-demo` fixture mode simulates carts and payment, rejects
+production use, and does not establish real merchant/payment compatibility.
 
-One submitted question freezes a frame from the visible live video (or its relay
-image), bounded to 960×540. The backend sends the question and image to
-`gemini-4-hydrogen` with low thinking and a structured object-detection schema.
-It identifies at most two requested objects and returns bounding boxes. The
-browser crops those boxes from the same frozen frame, then Shop MCP searches each
-crop using image similarity plus the visual description. Returned cards are
-labeled **Similar find on Shop**, not exact product identifications. Selecting
-**Gift this item** opens the existing gift panel with that product; adding it
-still requires an explicit action and fresh option/availability checks.
-
-The old standalone gift-search bar is removed. The gift panel remains available
-for current carts and checkout; new products come from the stream assistant.
-
-The assistant requires a live camera or screen share. It does not analyze profile
-avatars or the local synthetic standby feed. Frames/crops are kept only for the
-current request; no uploads or transcripts are saved on the server, and catalog
-results are not cached or rehosted. The UI keeps a short text exchange history
-and only the current set of product cards. Each question is grounded independently
-in a fresh frame; earlier questions are not sent as model conversation history.
-
-Local setup: set `GEMINI_API_KEY` in the ignored server environment file and
-optionally `GEMINI_ITEM_MODEL` (default `gemini-4-hydrogen`), then restart the local
-server. No Gemini calls happen until **Ask** is pressed. Missing keys, unclear
-objects, unsupported video, and Shop errors are shown in the panel. This feature
-uses image snapshots, not Gemini's continuous Live API.
-
-
-### Unified shopping panel
-
-**Shop this stream** now contains Shop connection, the visual question chat,
-product matches, and a collapsible **Cart** area. There is no separate gift panel
-above the video. Choosing a matched product expands its options and gift cart in
-place, preserving the same Shop session. Existing carts reopen automatically.
+This is a single-process hackathon prototype. Creator ownership uses the existing
+first-claim browser cookie. Buyer tokens, addresses, cart/checkout resources and
+payment instruments stay server-side. Buyer sessions expire after 24 hours and
+are lost on server restart. A durable file of hashed checkout identities prevents
+repeating in-app completion; uncertain outcomes are reconciled with reads.
+Production use needs real creator authentication and a shared secure session and
+transaction store. Do not log credentials, private checkout URLs or addresses.
