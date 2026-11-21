@@ -112,3 +112,15 @@ retries disabled. The endpoint allows five valid requests per IP per minute and
 two concurrent analyses per server process. These are prototype, process-local
 limits. Live-frame capture, clip-trigger wiring, automatic scheduling, and product
 cards are not connected yet; this endpoint is ready for those consumers.
+
+
+### Profile saves behind hosting proxies
+
+Profile writes accept browser-confirmed same-origin requests using the
+browser-controlled `Sec-Fetch-Site` header, even when a hosting proxy rewrites the
+internal scheme or Host. Direct same-origin requests and the configured `APP_URL`
+origin are also accepted. Set `APP_URL` to the public app URL for clients that do
+not send Fetch Metadata. Paths/trailing slashes in that setting are normalized.
+Missing/opaque origins and cross-origin browser requests without an explicit
+configured origin remain rejected. Creator ownership cookies are still required
+when editing an existing profile. No global `trust proxy` setting is enabled.
