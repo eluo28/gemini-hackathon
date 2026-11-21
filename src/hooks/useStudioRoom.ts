@@ -19,6 +19,11 @@ import {
   int16ToBase64,
   RELAY_TARGET_SAMPLE_RATE,
 } from '../utils/audioRelay';
+import {
+  RECENT_ROOMS_STORAGE_KEY,
+  removeRecentRoomHistory,
+  upsertRecentRoomHistory,
+} from '../utils/roomLifecycle';
 import { ClipRingBuffer, dispatchClipToSink } from '../services/clipSink';
 import type {
   ClientWsMessage,
@@ -29,6 +34,7 @@ import type {
   ChatMessage,
   ClipMarkerEvent,
   ParticipantRole,
+  RecentRoomEntry,
   RoomParticipant,
   RoomSummary,
   StreamCategory,
@@ -92,19 +98,15 @@ interface PeerRecord {
   pendingCandidates: RTCIceCandidateInit[];
 }
 
-function getOrCreateTabId(): string {
-  const key = 'clipthat_tab_id';
+function createClientParticipantId(): string {
   try {
-    const existing = window.sessionStorage.getItem(key);
-    if (existing && /^[a-zA-Z0-9_-]{6,48}$/.test(existing)) {
-      return existing;
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return `user_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
     }
-    const fresh = `user_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
-    window.sessionStorage.setItem(key, fresh);
-    return fresh;
   } catch {
-    return `user_${Math.random().toString(36).slice(2, 10)}`;
+    // Fallback below
   }
+  return `user_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
 }
 
 function getOrCreateTabAnimalAvatar(): AnimalAvatarOption {
@@ -181,6 +183,7 @@ function getInitialJoinContext(): {
 export function useStudioRoom(initialRoomId = 'main-stage') {
   const initialContext = useRef(getInitialJoinContext());
   const initialAvatar = useRef<AnimalAvatarOption>(getOrCreateTabAnimalAvatar());
+  const initialClientId = useRef<string>(createClientParticipantId());
 
   const [hasJoined, setHasJoined] = useState<boolean>(initialContext.current.autoJoined);
   const [selfAvatar, setSelfAvatar] = useState<AnimalAvatarOption>(initialAvatar.current);
@@ -190,7 +193,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const [slowModeSec, setSlowModeSec] = useState(0);
   const [pinnedMessage, setPinnedMessage] = useState<ChatMessage | null>(null);
   const [connected, setConnected] = useState(false);
-  const [selfId, setSelfId] = useState<string | null>(() => getOrCreateTabId());
+  const [selfId, setSelfId] = useState<string | null>(initialClientId.current);
   const [selfName, setSelfName] = useState<string>(initialContext.current.profile.name);
   const [selfRole, setSelfRole] = useState<ParticipantRole>(initialContext.current.profile.role);
   const [isLive, setIsLive] = useState(false);
@@ -202,6 +205,16 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatError, setChatError] = useState<string | null>(null);
   const [directoryRooms, setDirectoryRooms] = useState<RoomSummary[]>([]);
+  const [recentRooms, setRecentRooms] = useState<RecentRoomEntry[]>(() => {
+    try {
+      const raw = window.localStorage.getItem(RECENT_ROOMS_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as RecentRoomEntry[]) : [];
+    } catch {
+      return [];
+    }
+  });
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [remoteRelayFrames, setRemoteRelayFrames] = useState<Record<string, string>>({});
   const [mutedPeerIds, setMutedPeerIds] = useState<Record<string, boolean>>({});
@@ -221,8 +234,9 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
 
   const wsRef = useRef<WebSocket | null>(null);
   const hasJoinedRef = useRef<boolean>(initialContext.current.autoJoined);
-  const selfIdRef = useRef<string>(getOrCreateTabId());
+  const selfIdRef = useRef<string>(initialClientId.current);
   const roomIdRef = useRef<string>(sanitizeRoomSlug(initialRoomId));
+  const pendingRoomMetaRef = useRef<{ title?: string; category?: StreamCategory } | null>(null);
   const avatarRef = useRef<AnimalAvatarOption>(initialAvatar.current);
   const profileRef = useRef<StudioProfile>({
     ...initialContext.current.profile,
@@ -249,10 +263,29 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const synthCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const reconnectAttemptRef = useRef<number>(0);
+  const rtcConfigRef = useRef<RTCConfiguration>(RTC_CONFIG);
 
   streamStartedAtRef.current = streamStartedAt;
   hasJoinedRef.current = hasJoined;
   mutedPeerIdsRef.current = mutedPeerIds;
+
+  useEffect(() => {
+    let active = true;
+    void fetch('/api/rtc-config')
+      .then(async (res) => {
+        if (!res.ok) return;
+        const data = (await res.json()) as { iceServers?: RTCIceServer[] };
+        if (active && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+          rtcConfigRef.current = { iceServers: data.iceServers };
+        }
+      })
+      .catch(() => {
+        // Default STUN config remains active
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const ensurePlaybackContext = useCallback((): AudioContext | null => {
     if (typeof window === 'undefined') return null;
@@ -368,9 +401,42 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     }
   }, []);
 
+  const recordRecentRoom = useCallback((entry: RecentRoomEntry) => {
+    setRecentRooms((prev) => {
+      const next = upsertRecentRoomHistory(prev, entry, 8);
+      try {
+        window.localStorage.setItem(RECENT_ROOMS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore storage quota errors
+      }
+      return next;
+    });
+  }, []);
+
+  const removeRecentRoom = useCallback((targetRoomId: string) => {
+    setRecentRooms((prev) => {
+      const next = removeRecentRoomHistory(prev, targetRoomId);
+      try {
+        window.localStorage.setItem(RECENT_ROOMS_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  const clearRecentRooms = useCallback(() => {
+    setRecentRooms([]);
+    try {
+      window.localStorage.removeItem(RECENT_ROOMS_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const refreshDirectory = useCallback(async () => {
     try {
-      const res = await fetch('/api/rooms');
+      const res = await fetch('/api/rooms', { cache: 'no-store' });
       if (res.ok) {
         const data = (await res.json()) as RoomsListResponse;
         setDirectoryRooms(data.rooms || []);
@@ -382,9 +448,10 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
 
   useEffect(() => {
     refreshDirectory();
-    const timer = window.setInterval(refreshDirectory, 6000);
+    const intervalMs = hasJoined ? 4000 : 2500;
+    const timer = window.setInterval(refreshDirectory, intervalMs);
     return () => window.clearInterval(timer);
-  }, [refreshDirectory]);
+  }, [hasJoined, refreshDirectory]);
 
   const enumerateMediaDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -593,6 +660,15 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
         localStreamRef.current = stream;
         setLocalStream(stream);
         syncTracksToPeers(stream);
+        const activeWs = wsRef.current;
+        if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+          const mediaStateMsg: ClientWsMessage = {
+            type: 'participant:media-state',
+            audioEnabled: audioEnabledRef.current,
+            videoEnabled: videoEnabledRef.current,
+          };
+          activeWs.send(JSON.stringify(mediaStateMsg));
+        }
 
         if (meterAudioCtxRef.current) {
           meterAudioCtxRef.current.close().catch(() => {});
@@ -675,7 +751,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
       const existing = peersRef.current.get(peerId);
       if (existing) return existing;
 
-      const pc = new RTCPeerConnection(RTC_CONFIG);
+      const pc = new RTCPeerConnection(rtcConfigRef.current);
       const record: PeerRecord = {
         pc,
         makingOffer: false,
@@ -756,6 +832,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const startLocalMediaRef = useRef(startLocalMedia);
   const sendWsRef = useRef(sendWs);
   const playRelayedAudioChunkRef = useRef(playRelayedAudioChunk);
+  const recordRecentRoomRef = useRef(recordRecentRoom);
 
   ensurePeerRecordRef.current = ensurePeerRecord;
   sendOfferToPeerRef.current = sendOfferToPeer;
@@ -764,6 +841,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   startLocalMediaRef.current = startLocalMedia;
   sendWsRef.current = sendWs;
   playRelayedAudioChunkRef.current = playRelayedAudioChunk;
+  recordRecentRoomRef.current = recordRecentRoom;
 
   const joinRoom = useCallback(
     async (
@@ -797,6 +875,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
       window.history.replaceState({}, '', url.toString());
 
       if (!hasJoinedRef.current) {
+        pendingRoomMetaRef.current = meta || null;
         hasJoinedRef.current = true;
         setHasJoined(true);
         return;
@@ -990,14 +1069,13 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
       const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
       wsRef.current = ws;
 
-      ws.onopen = async () => {
-        if (profileRef.current.role !== 'viewer' && localMediaPromiseRef.current) {
-          await localMediaPromiseRef.current.catch(() => null);
-        }
+      ws.onopen = () => {
         if (disposed || ws.readyState !== WebSocket.OPEN) return;
 
         reconnectAttemptRef.current = 0;
         setConnected(true);
+        const pendingMeta = pendingRoomMetaRef.current;
+        pendingRoomMetaRef.current = null;
         const joinPayload: ClientWsMessage = {
           type: 'room:join',
           roomId: roomIdRef.current,
@@ -1005,6 +1083,8 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
           name: profileRef.current.name,
           handle: profileRef.current.handle,
           role: profileRef.current.role,
+          title: pendingMeta?.title,
+          category: pendingMeta?.category,
           audioEnabled: profileRef.current.role !== 'viewer' && audioEnabledRef.current,
           videoEnabled: profileRef.current.role !== 'viewer' && videoEnabledRef.current,
           avatarUrl: profileRef.current.avatarUrl || avatarRef.current.url,
@@ -1045,6 +1125,14 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
               setSelfName(selfMember.name);
               profileRef.current.role = selfMember.role;
             }
+            recordRecentRoomRef.current({
+              roomId: state.roomId,
+              title: state.title,
+              category: state.category,
+              lastRole: selfMember?.role || profileRef.current.role,
+              lastVisitedAt: Date.now(),
+            });
+            refreshDirectoryRef.current();
 
             for (const peer of state.participants) {
               if (peer.id !== msg.selfId && !isPolitePeer(msg.selfId, peer.id)) {
@@ -1069,7 +1157,35 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
             }
           } else if (msg.type === 'participant:updated') {
             const updated = msg.participant;
-            setParticipants((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+            let roleChanged = false;
+            setParticipants((prev) => {
+              const existing = prev.find((p) => p.id === updated.id);
+              if (existing && existing.role !== updated.role) {
+                roleChanged = true;
+              }
+              return prev.some((p) => p.id === updated.id)
+                ? prev.map((p) => (p.id === updated.id ? updated : p))
+                : [...prev, updated];
+            });
+            if (roleChanged && updated.id !== selfIdRef.current) {
+              const stale = peersRef.current.get(updated.id);
+              if (stale) {
+                stale.pc.close();
+                peersRef.current.delete(updated.id);
+              }
+              remoteStreamsMapRef.current.delete(updated.id);
+              setRemoteStreams((prev) => {
+                const next = { ...prev };
+                delete next[updated.id];
+                return next;
+              });
+              if (!isPolitePeer(selfIdRef.current, updated.id)) {
+                const rec = ensurePeerRecordRef.current(updated.id);
+                if (rec.pc.signalingState === 'stable' && !rec.makingOffer && !rec.pc.localDescription) {
+                  await sendOfferToPeerRef.current(updated.id, rec);
+                }
+              }
+            }
           } else if (msg.type === 'participant:left') {
             const leftId = msg.participantId;
             setParticipants((prev) => prev.filter((p) => p.id !== leftId));
@@ -1127,6 +1243,13 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
             setRoomTitle(msg.title);
             setRoomCategory(msg.category);
             setSlowModeSec(msg.slowModeSec ?? 0);
+            recordRecentRoomRef.current({
+              roomId: roomIdRef.current,
+              title: msg.title,
+              category: msg.category,
+              lastRole: profileRef.current.role,
+              lastVisitedAt: Date.now(),
+            });
             refreshDirectoryRef.current();
           } else if (msg.type === 'chat:message') {
             setChatMessages((prev) => appendChatUnique(prev, msg.message));
@@ -1581,6 +1704,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     chatMessages,
     chatError,
     directoryRooms,
+    recentRooms,
     remoteStreams,
     remoteRelayFrames,
     mutedPeerIds,
@@ -1603,6 +1727,8 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     reportAudioBlocked,
     joinRoom,
     refreshDirectory,
+    removeRecentRoom,
+    clearRecentRooms,
     switchInputDevice,
     toggleAudio,
     toggleVideo,

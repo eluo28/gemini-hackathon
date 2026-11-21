@@ -42,10 +42,15 @@ test('pickRandomAnimalAvatar and getFallbackAnimalAvatar return valid animal ass
   );
 });
 
-test('sanitizeRoomSlug normalizes arbitrary room titles into URL-safe slugs', () => {
+test('sanitizeRoomSlug normalizes arbitrary room titles and pasted invite URLs into URL-safe slugs', () => {
   assert.equal(sanitizeRoomSlug('  Late Night Coding!!  '), 'late-night-coding');
   assert.equal(sanitizeRoomSlug('---'), 'main-stage');
   assert.equal(sanitizeRoomSlug('Team_Alpha_01'), 'team_alpha_01');
+  assert.equal(
+    sanitizeRoomSlug('https://clipthat.example.com/?room=happy-path-stream'),
+    'happy-path-stream'
+  );
+  assert.equal(sanitizeRoomSlug('/friday-build'), 'friday-build');
 });
 
 test('normalizeHandle creates consistent lowercase @handles', () => {

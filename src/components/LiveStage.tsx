@@ -1,199 +1,35 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Mic,
   MicOff,
   MonitorUp,
+  PanelRightClose,
+  PanelRightOpen,
   Pencil,
   Scissors,
   SlidersHorizontal,
   Video,
   VideoOff,
-  Volume2,
   VolumeX,
   X,
 } from 'lucide-react';
 import {
   formatClockDuration,
-  getFallbackAnimalAvatar,
   partitionParticipants,
   STREAM_CATEGORIES,
-  validateDisplayName,
 } from '../utils/streamUtils';
 import type {
   ClipMarkerEvent,
   ParticipantRole,
+  RecentRoomEntry,
   RoomParticipant,
   RoomSummary,
   StreamCategory,
 } from '../utils/types';
-import type { RoomStreamerResponse, StreamerProfile } from '../shared/protocol';
 import type { MediaDeviceOption, StudioProfile } from '../hooks/useStudioRoom';
-
-interface VideoTileProps {
-  participant: RoomParticipant;
-  stream: MediaStream | null;
-  relayFrame?: string;
-  isSelf: boolean;
-  isPeerMuted: boolean;
-  audioUnlockSeq: number;
-  onTogglePeerMute: () => void;
-  onAudioBlocked: () => void;
-}
-
-function ParticipantVideoTile({
-  participant,
-  stream,
-  relayFrame,
-  isSelf,
-  isPeerMuted,
-  audioUnlockSeq,
-  onTogglePeerMute,
-  onAudioBlocked,
-}: VideoTileProps) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [imgFailed, setImgFailed] = useState(false);
-  const [hasLiveVideoFrame, setHasLiveVideoFrame] = useState(false);
-
-  const isVideoActive = participant.videoEnabled || participant.screenSharing;
-
-  useEffect(() => {
-    setHasLiveVideoFrame(false);
-  }, [stream, isVideoActive]);
-
-  // Video element (always muted; remote audio plays through the dedicated <audio> element below
-  // so turning a friend's camera off NEVER cuts off their microphone audio!)
-  useEffect(() => {
-    const el = videoRef.current;
-    if (!el) return;
-    if (stream && isVideoActive) {
-      el.srcObject = stream;
-      el.muted = true;
-      if (el.readyState >= 2 && el.videoWidth > 0) {
-        setHasLiveVideoFrame(true);
-      }
-      el.play().catch(() => {});
-    } else {
-      el.srcObject = null;
-      setHasLiveVideoFrame(false);
-    }
-  }, [stream, isVideoActive]);
-
-  // Dedicated always-mounted remote audio playback element (independent of camera on/off)
-  useEffect(() => {
-    const audioEl = audioRef.current;
-    if (!audioEl || isSelf) return;
-    if (stream) {
-      audioEl.srcObject = stream;
-      audioEl.muted = isPeerMuted;
-      audioEl.volume = 1;
-      if (!isPeerMuted) {
-        audioEl.play().catch(() => {
-          onAudioBlocked();
-        });
-      }
-    } else {
-      audioEl.srcObject = null;
-    }
-  }, [stream, isSelf, isPeerMuted, audioUnlockSeq, onAudioBlocked]);
-
-  const fallbackAvatar =
-    participant.avatarUrl || getFallbackAnimalAvatar(participant.id).url;
-
-  const showRelayImage = !isSelf && isVideoActive && !hasLiveVideoFrame && Boolean(relayFrame);
-
-  return (
-    <div
-      data-testid={`video-tile-${participant.id}`}
-      className="relative aspect-video rounded-2xl overflow-hidden bg-slate-100 border border-slate-200/90 shadow-xs"
-    >
-      {/* Always-mounted hidden audio element for remote participants */}
-      {!isSelf && stream && (
-        <audio ref={audioRef} autoPlay playsInline muted={isPeerMuted} className="hidden" />
-      )}
-
-      {stream && isVideoActive && (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          onLoadedData={() => {
-            if (videoRef.current && videoRef.current.videoWidth > 0) {
-              setHasLiveVideoFrame(true);
-            }
-          }}
-          onResize={() => {
-            if (videoRef.current && videoRef.current.videoWidth > 0) {
-              setHasLiveVideoFrame(true);
-            }
-          }}
-          className={showRelayImage ? 'hidden' : 'w-full h-full object-cover'}
-        />
-      )}
-
-      {showRelayImage ? (
-        <img
-          src={relayFrame}
-          alt={`${participant.name} live stream`}
-          className="w-full h-full object-cover"
-        />
-      ) : !stream || !isVideoActive ? (
-        <div className="w-full h-full bg-gradient-to-br from-slate-50 via-white to-slate-100/90 flex items-center justify-center p-4 pb-12">
-          {!imgFailed ? (
-            <img
-              src={fallbackAvatar}
-              alt={`${participant.name} profile avatar`}
-              referrerPolicy="no-referrer"
-              onError={() => setImgFailed(true)}
-              className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-full object-cover ring-4 ring-white shadow-md"
-            />
-          ) : (
-            <div className="w-20 h-20 sm:w-24 sm:h-24 md:w-28 md:h-28 rounded-full bg-slate-200/80 ring-4 ring-white shadow-md flex items-center justify-center">
-              <span className="font-display text-2xl font-bold text-slate-600">
-                {participant.name.slice(0, 2).toUpperCase()}
-              </span>
-            </div>
-          )}
-        </div>
-      ) : null}
-
-      {/* Per-participant speaker mute button (always available for remote peers, even with camera off) */}
-      {!isSelf && (
-        <button
-          type="button"
-          onClick={onTogglePeerMute}
-          aria-pressed={isPeerMuted}
-          aria-label={isPeerMuted ? `Unmute ${participant.name}` : `Mute ${participant.name}`}
-          className="absolute top-3 right-3 p-2 rounded-xl bg-white/90 hover:bg-white text-slate-900 border border-slate-200/80 shadow-xs backdrop-blur-sm transition-colors"
-        >
-          {isPeerMuted ? (
-            <VolumeX className="w-3.5 h-3.5 text-rose-600" aria-hidden="true" />
-          ) : (
-            <Volume2 className="w-3.5 h-3.5" aria-hidden="true" />
-          )}
-        </button>
-      )}
-
-      <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3 pointer-events-none">
-        <div className="max-w-[85%] px-3 py-1.5 rounded-xl bg-slate-950/75 backdrop-blur-md text-white">
-          <p className="text-xs font-semibold truncate">
-            {participant.name} {isSelf ? '(You)' : ''}
-          </p>
-          <p className="text-[11px] text-slate-200 truncate">
-            <span className="capitalize">{participant.role}</span> ·{' '}
-            {participant.screenSharing
-              ? 'Screen'
-              : participant.videoEnabled
-                ? 'Camera On'
-                : 'Camera Off'}{' '}
-            · {participant.audioEnabled ? 'Mic On' : 'Muted'}
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
+import { CreatorProfileSection } from './CreatorProfileSection';
+import { RoomSwitcherDrawer } from './RoomSwitcherDrawer';
+import { ParticipantVideoTile } from './VideoTile';
 
 interface LiveStageProps {
   roomId: string;
@@ -212,6 +48,7 @@ interface LiveStageProps {
   selfRole: ParticipantRole;
   participants: RoomParticipant[];
   directoryRooms: RoomSummary[];
+  recentRooms: RecentRoomEntry[];
   localStream: MediaStream | null;
   remoteStreams: Record<string, MediaStream>;
   remoteRelayFrames: Record<string, string>;
@@ -225,7 +62,12 @@ interface LiveStageProps {
   selectedAudioId: string;
   selectedVideoId: string;
   showRoomSwitcher: boolean;
+  theaterMode: boolean;
+  onToggleTheaterMode: () => void;
   onCloseRoomSwitcher: () => void;
+  onRefreshDirectory: () => void;
+  onRemoveRecentRoom: (roomId: string) => void;
+  onClearRecentRooms: () => void;
   onJoinRoom: (
     roomId: string,
     profile: StudioProfile,
@@ -261,6 +103,7 @@ export function LiveStage({
   selfRole,
   participants,
   directoryRooms,
+  recentRooms,
   localStream,
   remoteStreams,
   remoteRelayFrames,
@@ -274,7 +117,12 @@ export function LiveStage({
   selectedAudioId,
   selectedVideoId,
   showRoomSwitcher,
+  theaterMode,
+  onToggleTheaterMode,
   onCloseRoomSwitcher,
+  onRefreshDirectory,
+  onRemoveRecentRoom,
+  onClearRecentRooms,
   onJoinRoom,
   onLeaveRoom,
   onDismissStreamEndedNotice,
@@ -288,97 +136,16 @@ export function LiveStage({
   onReportAudioBlocked,
   onTriggerClipMark,
 }: LiveStageProps) {
-  const [streamer, setStreamer] = useState<StreamerProfile | null>(null);
-
-  const [canEditProfile, setCanEditProfile] = useState(false);
-  const [profileFormOpen, setProfileFormOpen] = useState(false);
-  const [profileError, setProfileError] = useState('');
-  const [savingProfile, setSavingProfile] = useState(false);
-  const emptyAddress = { recipient: '', street: '', city: '', region: '', postalCode: '', country: '' };
-  const [profileDraft, setProfileDraft] = useState({ displayName: '', handle: '', bio: '', shippingAddress: emptyAddress });
-
-  const openProfileForm = async () => {
-    setProfileError('');
-    setProfileDraft({ displayName: streamer?.displayName || selfName, handle: streamer?.handle || '', bio: streamer?.bio || '', shippingAddress: { ...emptyAddress } });
-    if (streamer) {
-      try {
-        const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/streamer/settings`);
-        if (!response.ok) throw new Error('Could not load your profile settings.');
-        const data = await response.json();
-        setProfileDraft(draft => ({ ...draft, shippingAddress: data.shippingAddress || { ...emptyAddress } }));
-      } catch {
-        setProfileError('Could not load your profile settings. Try again.');
-        return;
-      }
-    }
-    setProfileFormOpen(true);
-  };
-
-  const saveProfile = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const targetRoom = roomId;
-    setSavingProfile(true);
-    setProfileError('');
-    try {
-      const response = await fetch(`/api/rooms/${encodeURIComponent(targetRoom)}/streamer`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profileDraft),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not save profile.');
-      setStreamer(data.streamer);
-      setCanEditProfile(data.canEdit);
-      setProfileFormOpen(false);
-    } catch (error) {
-      setProfileError(error instanceof Error ? error.message : 'Could not save profile.');
-    } finally {
-      setSavingProfile(false);
-    }
-  };
-
-  useEffect(() => {
-    const controller = new AbortController();
-    setStreamer(null);
-    setCanEditProfile(false);
-    setProfileFormOpen(false);
-    setProfileError('');
-    void fetch(`/api/rooms/${encodeURIComponent(roomId)}/streamer`, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Could not load streamer');
-        const data: RoomStreamerResponse = await response.json();
-        if (!controller.signal.aborted) { setStreamer(data.streamer); setCanEditProfile(data.canEdit); }
-      })
-      .catch(() => {
-        // The stage remains usable if creator metadata cannot be loaded.
-      });
-    return () => controller.abort();
-  }, [roomId]);
-
   const [editingMeta, setEditingMeta] = useState(false);
   const [showDevices, setShowDevices] = useState(false);
   const [titleDraft, setTitleDraft] = useState(roomTitle);
   const [categoryDraft, setCategoryDraft] = useState<StreamCategory>(roomCategory);
-  const [nameInput, setNameInput] = useState(selfName);
-  const [nameError, setNameError] = useState<string | null>(null);
-  const [roomInput, setRoomInput] = useState(roomId);
-  const [roleInput, setRoleInput] = useState<ParticipantRole>(selfRole);
   const [liveClockSec, setLiveClockSec] = useState(0);
 
   useEffect(() => {
     setTitleDraft(roomTitle);
     setCategoryDraft(roomCategory);
   }, [roomCategory, roomTitle]);
-
-  useEffect(() => {
-    setNameInput(selfName);
-  }, [selfName]);
-
-  useEffect(() => {
-    setRoleInput(selfRole);
-  }, [selfRole]);
-
-  useEffect(() => {
-    setRoomInput(roomId);
-  }, [roomId]);
 
   useEffect(() => {
     if (!isLive || !streamStartedAt) {
@@ -391,23 +158,20 @@ export function LiveStage({
     return () => window.clearInterval(interval);
   }, [isLive, streamStartedAt]);
 
-  const { broadcasters, viewers } = partitionParticipants(participants);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setEditingMeta(false);
+        setShowDevices(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
-  const handleRoomSwitch = (e: React.FormEvent) => {
-    e.preventDefault();
-    const check = validateDisplayName(nameInput);
-    if (!check.ok) {
-      setNameError(check.reason);
-      return;
-    }
-    setNameError(null);
-    onJoinRoom(roomInput, {
-      name: check.name,
-      handle: '',
-      role: roleInput,
-    });
-    onCloseRoomSwitcher();
-  };
+  const { broadcasters, viewers } = partitionParticipants(participants);
+  const hostParticipant =
+    broadcasters.find((p) => p.role === 'host') || broadcasters[0] || undefined;
 
   const handleSaveMeta = (e: React.FormEvent) => {
     e.preventDefault();
@@ -415,119 +179,34 @@ export function LiveStage({
     setEditingMeta(false);
   };
 
+  const singleStageMaxWidth = theaterMode ? 'max-w-5xl' : 'max-w-4xl';
   const gridColsClass =
     broadcasters.length <= 1
-      ? 'grid-cols-1 max-w-4xl mx-auto w-full'
+      ? `grid-cols-1 ${singleStageMaxWidth} mx-auto w-full`
       : broadcasters.length === 2
         ? 'grid-cols-1 md:grid-cols-2 w-full'
         : 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3 w-full';
 
   return (
     <div className="flex-1 min-w-0 flex flex-col bg-[#FAFAFB] lg:overflow-y-auto">
-      {/* Inline Room Switcher Drawer */}
+      {/* Inline Twitch-style Room Browser & Switcher Drawer */}
       {showRoomSwitcher && (
-        <div className="px-5 md:px-7 py-5 bg-white border-b border-slate-200/80 space-y-4">
-          <form onSubmit={handleRoomSwitch} noValidate className="flex flex-wrap items-end gap-3.5">
-            <div className="min-w-[160px] flex-1">
-              <label htmlFor="studio-name" className="block text-xs font-medium text-slate-600 mb-1.5">
-                Display Name
-              </label>
-              <input
-                id="studio-name"
-                type="text"
-                required
-                maxLength={32}
-                value={nameInput}
-                onChange={(e) => {
-                  setNameInput(e.target.value);
-                  if (nameError) setNameError(null);
-                }}
-                placeholder="Enter your name"
-                className={`w-full bg-slate-50 border rounded-xl px-3 py-2 text-sm text-slate-950 focus:bg-white focus:outline-none transition-colors ${
-                  nameError
-                    ? 'border-rose-400 focus:border-rose-600'
-                    : 'border-slate-200 focus:border-slate-900'
-                }`}
-              />
-            </div>
-            <div className="min-w-[160px] flex-1">
-              <label htmlFor="studio-room" className="block text-xs font-medium text-slate-600 mb-1.5">
-                Room Slug
-              </label>
-              <input
-                id="studio-room"
-                type="text"
-                required
-                value={roomInput}
-                onChange={(e) => setRoomInput(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-mono text-slate-950 focus:bg-white focus:outline-none focus:border-slate-900 transition-colors"
-              />
-            </div>
-            <div className="min-w-[180px]">
-              <label htmlFor="studio-role" className="block text-xs font-medium text-slate-600 mb-1.5">
-                Role
-              </label>
-              <select
-                id="studio-role"
-                value={roleInput}
-                onChange={(e) => setRoleInput(e.target.value as ParticipantRole)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-950 focus:bg-white focus:outline-none focus:border-slate-900 transition-colors"
-              >
-                <option value="host">Host (Camera + Mic)</option>
-                <option value="cohost">Co-Host (On Stage)</option>
-                <option value="viewer">Viewer (Watch &amp; Chat)</option>
-              </select>
-            </div>
-            <button
-              type="submit"
-              className="px-4 py-2 text-sm font-semibold bg-slate-950 hover:bg-slate-800 text-white rounded-xl transition-colors whitespace-nowrap"
-            >
-              Join Room
-            </button>
-          </form>
-
-          {nameError && (
-            <p role="alert" className="text-xs text-rose-600 font-medium">
-              {nameError}
-            </p>
-          )}
-
-          {directoryRooms.length > 0 && (
-            <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500">
-              <span className="font-medium text-slate-700">Active rooms</span>
-              {directoryRooms.slice(0, 5).map((r) => (
-                <button
-                  key={r.roomId}
-                  type="button"
-                  onClick={() => {
-                    const check = validateDisplayName(nameInput || selfName);
-                    if (!check.ok) {
-                      setNameError(check.reason);
-                      return;
-                    }
-                    onJoinRoom(r.roomId, {
-                      name: check.name,
-                      handle: '',
-                      role: roleInput,
-                    });
-                    onCloseRoomSwitcher();
-                  }}
-                  className="hover:text-slate-950 transition-colors whitespace-nowrap tabular-nums"
-                >
-                  <span className="font-medium text-slate-800">{r.title}</span>{' '}
-                  <span className="text-slate-400">
-                    ({r.isLive ? 'Live · ' : ''}
-                    {r.broadcasterCount} on stage)
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <RoomSwitcherDrawer
+          roomId={roomId}
+          selfName={selfName}
+          selfRole={selfRole}
+          directoryRooms={directoryRooms}
+          recentRooms={recentRooms}
+          onClose={onCloseRoomSwitcher}
+          onRefreshDirectory={onRefreshDirectory}
+          onRemoveRecentRoom={onRemoveRecentRoom}
+          onClearRecentRooms={onClearRecentRooms}
+          onJoinRoom={onJoinRoom}
+        />
       )}
 
       {/* Stream Context Header */}
-      <div className="px-5 md:px-7 pt-5 pb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="px-5 md:px-7 pt-5 pb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="font-display text-xl font-semibold tracking-tight text-slate-950 truncate">
@@ -563,60 +242,30 @@ export function LiveStage({
             {broadcasters.length} on stage · {viewers.length} watching
           </p>
         </div>
+
+        {/* Subtle Desktop Theater Mode Toggle (T) */}
+        <button
+          type="button"
+          onClick={onToggleTheaterMode}
+          aria-pressed={theaterMode}
+          aria-keyshortcuts="T"
+          aria-label={theaterMode ? 'Show stream chat' : 'Hide stream chat (Theater mode)'}
+          title={theaterMode ? 'Show chat (T)' : 'Theater mode (T)'}
+          className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-slate-950 bg-white hover:bg-slate-100 border border-slate-200/90 rounded-xl shadow-2xs transition-colors shrink-0"
+        >
+          {theaterMode ? (
+            <>
+              <PanelRightOpen className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Show Chat</span>
+            </>
+          ) : (
+            <>
+              <PanelRightClose className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Theater</span>
+            </>
+          )}
+        </button>
       </div>
-
-      {streamer && streamer.roomId === roomId && (
-        <section aria-label="About the streamer" className="mx-5 md:mx-7 mb-4 rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div aria-hidden="true" className="flex h-11 w-11 items-center justify-center rounded-full bg-violet-100 text-sm font-bold text-violet-800">
-              {streamer.initials}
-            </div>
-            <div className="flex-1">
-              <h2 className="text-sm font-semibold text-slate-950">{streamer.displayName}</h2>
-              <p className="text-xs text-slate-500">{streamer.handle}</p>
-            </div>
-            {selfRole === 'host' && canEditProfile && (
-              <button type="button" onClick={() => void openProfileForm()} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold">Edit profile</button>
-            )}
-            <button type="button" disabled aria-describedby="gifting-status" className="rounded-xl bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-400 cursor-not-allowed">
-              Gift to {streamer.displayName}
-            </button>
-          </div>
-          <p className="mt-3 text-sm text-slate-600">{streamer.bio}</p>
-          <p id="gifting-status" className="mt-2 text-xs text-slate-500">Gifting is coming soon.</p>
-        </section>
-      )}
-
-      {!streamer && selfRole === 'host' && canEditProfile && !profileFormOpen && (
-        <div className="mx-5 md:mx-7 mb-4 rounded-2xl border border-slate-200 bg-white p-4">
-          <p className="mb-3 text-sm text-slate-600">Add your creator profile and a delivery address for future gifts.</p>
-          <button type="button" onClick={() => void openProfileForm()} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Set up creator profile</button>
-        </div>
-      )}
-      {profileError && <p role="alert" className="mx-5 md:mx-7 mb-3 text-sm text-rose-700">{profileError}</p>}
-      {profileFormOpen && selfRole === 'host' && (
-        <form onSubmit={saveProfile} aria-label="Creator profile" className="mx-5 md:mx-7 mb-4 rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
-          <h2 className="text-base font-semibold">Your creator profile</h2>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-sm">Display name<input required maxLength={60} value={profileDraft.displayName} onChange={e => setProfileDraft({ ...profileDraft, displayName: e.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
-            <label className="text-sm">Handle<input required maxLength={31} placeholder="@yourname" value={profileDraft.handle} onChange={e => setProfileDraft({ ...profileDraft, handle: e.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
-          </div>
-          <label className="block text-sm">Bio<textarea maxLength={500} value={profileDraft.bio} onChange={e => setProfileDraft({ ...profileDraft, bio: e.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
-          <fieldset className="space-y-3">
-            <legend className="text-sm font-semibold">Gift delivery address (optional)</legend>
-            <p className="text-xs text-slate-500">Saved privately for gift delivery. This does not enable gifting yet.</p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {([['recipient', 'Recipient name'], ['street', 'Street address'], ['city', 'City'], ['region', 'State / region'], ['postalCode', 'Postal code'], ['country', 'Country code (e.g. US)']] as const).map(([key, label]) => (
-                <label key={key} className="text-sm">{label}<input maxLength={key === 'country' ? 2 : 200} value={profileDraft.shippingAddress[key]} onChange={e => setProfileDraft({ ...profileDraft, shippingAddress: { ...profileDraft.shippingAddress, [key]: key === 'country' ? e.target.value.toUpperCase() : e.target.value } })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
-              ))}
-            </div>
-          </fieldset>
-          <div className="flex gap-3">
-            <button disabled={savingProfile} type="submit" className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{savingProfile ? 'Saving…' : 'Save profile'}</button>
-            <button disabled={savingProfile} type="button" onClick={() => { setProfileFormOpen(false); setProfileError(''); }} className="rounded-xl border border-slate-200 px-4 py-2 text-sm">Cancel</button>
-          </div>
-        </form>
-      )}
 
       {/* Inline Stream Info Editor */}
       {editingMeta && (
@@ -749,8 +398,8 @@ export function LiveStage({
         </div>
       )}
 
-      {/* Main Video Stage + Sleek Control Dock */}
-      <div className="px-5 md:px-7 pb-6 flex-1 flex flex-col gap-5">
+      {/* Main Video Stage + Sleek Control Dock + Creator Bio Below Fold */}
+      <div className="px-5 md:px-7 pb-6 flex-1 flex flex-col gap-4">
         <div className="flex-1 flex items-center">
           <div className={`grid gap-4 ${gridColsClass}`} data-testid="stage-video-grid">
             {broadcasters.length === 0 ? (
@@ -791,13 +440,17 @@ export function LiveStage({
 
         {/* Sleek Broadcast Control Dock */}
         {selfRole !== 'viewer' ? (
-          <div className="max-w-4xl mx-auto w-full bg-white border border-slate-200/90 rounded-2xl px-4 py-3 shadow-xs space-y-3">
+          <div
+            className={`${singleStageMaxWidth} mx-auto w-full bg-white border border-slate-200/90 rounded-2xl px-4 py-3 shadow-xs space-y-3`}
+          >
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={onToggleAudio}
                   aria-pressed={!audioEnabled}
+                  aria-keyshortcuts="M"
+                  title={audioEnabled ? 'Mute microphone (M)' : 'Unmute microphone (M)'}
                   aria-label={audioEnabled ? 'Mute microphone' : 'Unmute microphone'}
                   className={`inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-xl border transition-colors whitespace-nowrap ${
                     audioEnabled
@@ -817,6 +470,8 @@ export function LiveStage({
                   type="button"
                   onClick={onToggleVideo}
                   aria-pressed={!videoEnabled}
+                  aria-keyshortcuts="V"
+                  title={videoEnabled ? 'Turn camera off (V)' : 'Turn camera on (V)'}
                   aria-label={videoEnabled ? 'Turn camera off' : 'Turn camera on'}
                   className={`inline-flex items-center gap-2 px-3.5 py-2 text-xs font-medium rounded-xl border transition-colors whitespace-nowrap ${
                     videoEnabled
@@ -880,6 +535,8 @@ export function LiveStage({
               <button
                 type="button"
                 onClick={() => onTriggerClipMark('manual')}
+                aria-keyshortcuts="C"
+                title="Mark clip moment (C)"
                 className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold bg-slate-950 hover:bg-slate-800 text-white rounded-xl transition-colors whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
               >
                 <Scissors className="w-3.5 h-3.5" aria-hidden="true" />
@@ -927,7 +584,9 @@ export function LiveStage({
             )}
           </div>
         ) : (
-          <div className="max-w-4xl mx-auto w-full bg-white border border-slate-200/90 rounded-2xl px-4 py-3 shadow-xs flex flex-wrap items-center justify-between gap-3">
+          <div
+            className={`${singleStageMaxWidth} mx-auto w-full bg-white border border-slate-200/90 rounded-2xl px-4 py-3 shadow-xs flex flex-wrap items-center justify-between gap-3`}
+          >
             <p className="text-xs text-slate-600">
               {isLive
                 ? 'Watching live. Chat on the right or step onto the stage anytime.'
@@ -948,6 +607,14 @@ export function LiveStage({
             </button>
           </div>
         )}
+
+        {/* Creator Profile Bio / Setup cleanly positioned below the video stage & dock */}
+        <CreatorProfileSection
+          roomId={roomId}
+          selfName={selfName}
+          selfRole={selfRole}
+          hostAvatarUrl={hostParticipant?.avatarUrl}
+        />
       </div>
     </div>
   );

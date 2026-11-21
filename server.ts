@@ -19,6 +19,11 @@ import {
   validateChatSend,
   validateDisplayName,
 } from './src/utils/streamUtils';
+import {
+  EMPTY_ROOM_GRACE_MS,
+  filterAndSortDirectoryRooms,
+  isRoomDeprecated,
+} from './src/utils/roomLifecycle';
 import type {
   ClientWsMessage,
   CreateRoomRequest,
@@ -41,7 +46,7 @@ import type {
 const PORT = Number(process.env.PORT || 3000);
 const STARTED_AT = Date.now();
 const MAX_WS_PAYLOAD_BYTES = 256 * 1024;
-const IDLE_ROOM_TTL_MS = 30 * 60 * 1000;
+const ROOM_GC_INTERVAL_MS = 15_000;
 
 interface ParticipantSession {
   info: RoomParticipant;
@@ -59,6 +64,8 @@ interface RoomState {
   pinnedMessage: ChatMessage | null;
   participants: Map<string, ParticipantSession>;
   chatHistory: ChatMessage[];
+  createdAt: number;
+  lastActivityAt: number;
   lastEmptyAt: number | null;
 }
 
@@ -83,6 +90,7 @@ function sanitizeSafeId(raw: unknown): string | null {
 function getOrCreateRoom(rawRoomId: string): RoomState {
   const safeId = sanitizeRoomSlug(rawRoomId);
   let room = rooms.get(safeId);
+  const now = Date.now();
   if (!room) {
     room = {
       id: safeId,
@@ -94,14 +102,31 @@ function getOrCreateRoom(rawRoomId: string): RoomState {
       pinnedMessage: null,
       participants: new Map(),
       chatHistory: [],
-      lastEmptyAt: Date.now(),
+      createdAt: now,
+      lastActivityAt: now,
+      lastEmptyAt: now,
     };
     rooms.set(safeId, room);
   }
   return room;
 }
 
-getOrCreateRoom('main-stage');
+function sweepDeprecatedRooms(now = Date.now()): number {
+  let removed = 0;
+  for (const [id, room] of rooms.entries()) {
+    if (
+      isRoomDeprecated(
+        { participantCount: room.participants.size, lastEmptyAt: room.lastEmptyAt },
+        now,
+        EMPTY_ROOM_GRACE_MS
+      )
+    ) {
+      rooms.delete(id);
+      removed += 1;
+    }
+  }
+  return removed;
+}
 
 function serializeRoomState(room: RoomState): RoomStatePayload {
   return {
@@ -130,6 +155,9 @@ function summarizeRoom(room: RoomState): RoomSummary {
     broadcasterCount: broadcasters.length,
     viewerCount: viewers.length,
     hostName: host?.name || 'Open Stage',
+    hostAvatarUrl: host?.avatarUrl,
+    createdAt: room.createdAt,
+    lastActivityAt: room.lastActivityAt,
   };
 }
 
@@ -172,37 +200,80 @@ class SlidingWindowLimiter {
 async function startServer() {
   const app = express();
   app.disable('x-powered-by');
-  app.use((_req, res, next) => {
+  app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    if (req.path.startsWith('/api/')) {
+      const started = Date.now();
+      res.on('finish', () => {
+        if (req.path === '/api/rooms' && res.statusCode === 200) return;
+        console.log(
+          JSON.stringify({
+            level: res.statusCode >= 500 ? 'error' : 'info',
+            event: 'http_request',
+            method: req.method,
+            path: req.path,
+            status: res.statusCode,
+            durationMs: Date.now() - started,
+          })
+        );
+      });
+    }
     next();
   });
   app.use('/api/shop', createItemDetectionRouter());
   app.use(express.json({ limit: '256kb' }));
   app.use('/api/shop', createShopRouter());
 
+  const defaultIceServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ];
+
+  function resolveIceServers() {
+    const raw = process.env.WEBRTC_ICE_SERVERS;
+    if (!raw) return defaultIceServers;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    } catch {
+      // Fall back to default public STUN servers if env JSON is malformed
+    }
+    return defaultIceServers;
+  }
+
+  app.get('/api/rtc-config', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ iceServers: resolveIceServers() });
+  });
+
   app.get('/api/health', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    sweepDeprecatedRooms();
     let activeParticipants = 0;
+    let activeRooms = 0;
     for (const room of rooms.values()) {
-      activeParticipants += room.participants.size;
+      if (room.participants.size > 0) {
+        activeRooms += 1;
+        activeParticipants += room.participants.size;
+      }
     }
     const payload: HealthResponse = {
       status: 'ok',
       service: 'ClipThat',
       uptimeSec: Math.floor((Date.now() - STARTED_AT) / 1000),
-      activeRooms: rooms.size,
+      activeRooms,
       activeParticipants,
     };
     res.json(payload);
   });
 
   app.get('/api/rooms', (_req, res) => {
-    const list = Array.from(rooms.values())
-      .map(summarizeRoom)
-      .sort((a, b) => {
-        if (a.isLive !== b.isLive) return a.isLive ? -1 : 1;
-        return b.broadcasterCount + b.viewerCount - (a.broadcasterCount + a.viewerCount);
-      });
+    res.setHeader('Cache-Control', 'no-store');
+    sweepDeprecatedRooms();
+    const list = filterAndSortDirectoryRooms(Array.from(rooms.values()).map(summarizeRoom));
     const response: RoomsListResponse = { rooms: list };
     res.json(response);
   });
@@ -270,6 +341,7 @@ async function startServer() {
     if (category && VALID_CATEGORIES.has(category)) {
       room.category = category;
     }
+    room.lastActivityAt = Date.now();
     const response: CreateRoomResponse = { room: summarizeRoom(room) };
     res.status(201).json(response);
   });
@@ -312,14 +384,8 @@ async function startServer() {
   }, 15000);
 
   const roomGcInterval = setInterval(() => {
-    const now = Date.now();
-    for (const [id, room] of rooms.entries()) {
-      if (id === 'main-stage') continue;
-      if (room.participants.size === 0 && room.lastEmptyAt && now - room.lastEmptyAt > IDLE_ROOM_TTL_MS) {
-        rooms.delete(id);
-      }
-    }
-  }, 5 * 60 * 1000);
+    sweepDeprecatedRooms();
+  }, ROOM_GC_INTERVAL_MS);
 
   wss.on('close', () => {
     clearInterval(heartbeatInterval);
@@ -416,6 +482,7 @@ async function startServer() {
           currentRoom = room;
           participantId = incomingId;
           room.lastEmptyAt = null;
+          room.lastActivityAt = Date.now();
 
           const safeAvatar =
             sanitizeAvatarUrl(typeof msg.avatarUrl === 'string' ? msg.avatarUrl : undefined) ||
@@ -467,6 +534,7 @@ async function startServer() {
           if (!entry || entry.info.role === 'viewer') return;
           currentRoom.isLive = Boolean(msg.isLive);
           currentRoom.streamStartedAt = currentRoom.isLive ? Date.now() : null;
+          currentRoom.lastActivityAt = Date.now();
           broadcastToRoom(currentRoom, {
             type: 'stream:status',
             isLive: currentRoom.isLive,
@@ -532,6 +600,7 @@ async function startServer() {
           }
 
           entry.lastChatAt = now;
+          currentRoom.lastActivityAt = now;
           const streamTimeSec = currentRoom.streamStartedAt
             ? Math.max(0, Math.round((now - currentRoom.streamStartedAt) / 1000))
             : Math.max(0, Number(msg.streamTimeSec) || 0);

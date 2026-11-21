@@ -89,11 +89,31 @@ export function validateDisplayName(
 }
 
 /**
- * Normalizes a user-provided room name or slug into a URL-safe identifier.
+ * Normalizes a user-provided room name, slug, or pasted invite URL into a URL-safe identifier.
  */
 export function sanitizeRoomSlug(raw: string): string {
-  const clean = raw
+  let candidate = raw.trim();
+  if (/^https?:\/\//i.test(candidate)) {
+    try {
+      const parsed = new URL(candidate);
+      const fromQuery = parsed.searchParams.get('room');
+      if (fromQuery) {
+        candidate = fromQuery;
+      } else {
+        candidate = parsed.pathname.replace(/^\/+|\/+$/g, '');
+      }
+    } catch {
+      // Fall through to standard normalization
+    }
+  } else if (candidate.startsWith('?')) {
+    const params = new URLSearchParams(candidate);
+    const fromQuery = params.get('room');
+    if (fromQuery) candidate = fromQuery;
+  }
+
+  const clean = candidate
     .trim()
+    .replace(/^\/+/, '')
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '')

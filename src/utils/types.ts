@@ -50,6 +50,17 @@ export interface RoomSummary {
   broadcasterCount: number;
   viewerCount: number;
   hostName: string;
+  hostAvatarUrl?: string;
+  createdAt: number;
+  lastActivityAt: number;
+}
+
+export interface RecentRoomEntry {
+  roomId: string;
+  title: string;
+  category: StreamCategory;
+  lastRole: ParticipantRole;
+  lastVisitedAt: number;
 }
 
 export interface RoomStatePayload {

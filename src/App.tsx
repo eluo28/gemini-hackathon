@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { JoinStreamGate } from './components/JoinStreamGate';
 import { LiveChatPanel } from './components/LiveChatPanel';
 import { LiveStage } from './components/LiveStage';
 import { TopNav } from './components/TopNav';
 import { useStudioRoom } from './hooks/useStudioRoom';
 import { sanitizeRoomSlug } from './utils/streamUtils';
+import { resolveStudioShortcut } from './utils/studioShortcuts';
 
 function getInitialRoomFromUrl(): string {
   const params = new URLSearchParams(window.location.search);
@@ -40,7 +41,49 @@ async function copyTextReliable(text: string): Promise<boolean> {
 export default function App() {
   const studio = useStudioRoom(getInitialRoomFromUrl());
   const [showRoomSwitcher, setShowRoomSwitcher] = useState(false);
+  const [theaterMode, setTheaterMode] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
+
+  useEffect(() => {
+    if (!studio.hasJoined) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const action = resolveStudioShortcut(
+        {
+          key: event.key,
+          metaKey: event.metaKey,
+          ctrlKey: event.ctrlKey,
+          altKey: event.altKey,
+          targetTagName: target?.tagName,
+          targetIsContentEditable: target?.isContentEditable,
+        },
+        { isBroadcaster: studio.selfRole !== 'viewer' }
+      );
+      if (!action) return;
+      if (action === 'close-overlays') {
+        setShowRoomSwitcher(false);
+        return;
+      }
+      event.preventDefault();
+      if (action === 'toggle-theater') {
+        setTheaterMode((v) => !v);
+      } else if (action === 'toggle-mic') {
+        studio.toggleAudio();
+      } else if (action === 'toggle-camera') {
+        studio.toggleVideo();
+      } else if (action === 'trigger-clip') {
+        studio.triggerClipMark('manual');
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    studio.hasJoined,
+    studio.selfRole,
+    studio.toggleAudio,
+    studio.toggleVideo,
+    studio.triggerClipMark,
+  ]);
 
   const handleCopyInvite = async () => {
     const url = `${window.location.origin}/?room=${encodeURIComponent(studio.roomId)}`;
@@ -58,14 +101,22 @@ export default function App() {
         initialRole={studio.selfRole}
         avatar={studio.selfAvatar}
         directoryRooms={studio.directoryRooms}
+        recentRooms={studio.recentRooms}
         onShuffleAvatar={studio.shuffleSelfAvatar}
-        onJoin={({ name, roomId, role, avatarUrl }) => {
-          void studio.joinRoom(roomId, {
-            name,
-            handle: '',
-            role,
-            avatarUrl,
-          });
+        onRefreshDirectory={studio.refreshDirectory}
+        onRemoveRecentRoom={studio.removeRecentRoom}
+        onClearRecentRooms={studio.clearRecentRooms}
+        onJoin={({ name, roomId, role, avatarUrl, title, category }) => {
+          void studio.joinRoom(
+            roomId,
+            {
+              name,
+              handle: '',
+              role,
+              avatarUrl,
+            },
+            title || category ? { title, category } : undefined
+          );
         }}
       />
     );
@@ -83,6 +134,7 @@ export default function App() {
         onToggleLive={studio.toggleGoLive}
         onLeaveRoom={() => {
           setShowRoomSwitcher(false);
+          setTheaterMode(false);
           studio.leaveRoom();
         }}
         onSwitchToStageRole={() => {
@@ -113,6 +165,7 @@ export default function App() {
           selfRole={studio.selfRole}
           participants={studio.participants}
           directoryRooms={studio.directoryRooms}
+          recentRooms={studio.recentRooms}
           localStream={studio.localStream}
           remoteStreams={studio.remoteStreams}
           remoteRelayFrames={studio.remoteRelayFrames}
@@ -126,10 +179,16 @@ export default function App() {
           selectedAudioId={studio.selectedAudioId}
           selectedVideoId={studio.selectedVideoId}
           showRoomSwitcher={showRoomSwitcher}
+          theaterMode={theaterMode}
+          onToggleTheaterMode={() => setTheaterMode((v) => !v)}
           onCloseRoomSwitcher={() => setShowRoomSwitcher(false)}
+          onRefreshDirectory={studio.refreshDirectory}
+          onRemoveRecentRoom={studio.removeRecentRoom}
+          onClearRecentRooms={studio.clearRecentRooms}
           onJoinRoom={studio.joinRoom}
           onLeaveRoom={() => {
             setShowRoomSwitcher(false);
+            setTheaterMode(false);
             studio.leaveRoom();
           }}
           onDismissStreamEndedNotice={studio.dismissStreamEndedNotice}
@@ -144,21 +203,23 @@ export default function App() {
           onTriggerClipMark={studio.triggerClipMark}
         />
 
-        <LiveChatPanel
-          messages={studio.chatMessages}
-          pinnedMessage={studio.pinnedMessage}
-          participants={studio.participants}
-          selfId={studio.selfId}
-          selfRole={studio.selfRole}
-          connected={studio.connected}
-          slowModeSec={studio.slowModeSec}
-          chatError={studio.chatError}
-          onSendMessage={studio.sendChatMessage}
-          onReactMessage={studio.reactToChatMessage}
-          onPinMessage={studio.pinChatMessage}
-          onDeleteMessage={studio.deleteChatMessage}
-          onUpdateSlowMode={(sec) => studio.updateRoomMeta({ slowModeSec: sec })}
-        />
+        {!theaterMode && (
+          <LiveChatPanel
+            messages={studio.chatMessages}
+            pinnedMessage={studio.pinnedMessage}
+            participants={studio.participants}
+            selfId={studio.selfId}
+            selfRole={studio.selfRole}
+            connected={studio.connected}
+            slowModeSec={studio.slowModeSec}
+            chatError={studio.chatError}
+            onSendMessage={studio.sendChatMessage}
+            onReactMessage={studio.reactToChatMessage}
+            onPinMessage={studio.pinChatMessage}
+            onDeleteMessage={studio.deleteChatMessage}
+            onUpdateSlowMode={(sec) => studio.updateRoomMeta({ slowModeSec: sec })}
+          />
+        )}
       </main>
     </div>
   );
