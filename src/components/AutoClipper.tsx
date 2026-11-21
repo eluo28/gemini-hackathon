@@ -10,7 +10,7 @@ function save(blob: Blob, name: string) { const url = URL.createObjectURL(blob);
 function ChoiceBars({ answers }: { answers: ClipAnswers }) {
   return <div className="ac-distributions">{Object.entries(answers).filter(([, a]) => a.type !== 'noul').map(([key, answer]) => <details key={key}><summary>{key.replaceAll('_', ' ')} <span>{answer.type === 'choice' ? answer.choice : answer.type === 'score' ? `${answer.score.toFixed(2)} / 4` : ''}</span></summary>{answer.type !== 'noul' && Object.entries(answer.probabilities).map(([option, value]) => <div className="ac-distribution" key={option}><span>{option}</span><meter min={0} max={1} value={value} aria-label={`${key}: ${option}`} /><code>{Math.round(value * 100)}%</code></div>)}</details>)}</div>;
 }
-function ClipCard({ clip, clipper }: { clip: SavedClip; clipper: Clipper }) {
+function ClipCard({ clip, clipper, onShopClip }: { clip: SavedClip; clipper: Clipper; onShopClip?: (clip: SavedClip) => void }) {
   const [deleting, setDeleting] = useState(false);
   const category = clip.answers.category;
   return <article className="ac-clip">
@@ -19,7 +19,7 @@ function ClipCard({ clip, clipper }: { clip: SavedClip; clipper: Clipper }) {
       <p className="ac-meta">{new Date(clip.capturedAt).toLocaleString()} · {clip.source} · {clip.roomId}</p>
       <p className="ac-meta font-mono">{clip.durationSec.toFixed(1)}s clip · source {clip.trim.start.toFixed(1)}–{clip.trim.end.toFixed(1)}s</p>
       <details><summary className="ac-meta">Why this moment</summary>{clip.brief && <p className="ac-meta">{clip.brief.summary}</p>}{clip.edit && <p className="ac-meta">{clip.edit.reason}</p>}<div className="ac-mini-scores">{(['worthy', 'arc', 'viral', 'hook'] as const).map(key => <span key={key} title={labels[key]}>{labels[key]} <b>{Math.round((probability(clip.answers, key) ?? 0) * 100)}%</b></span>)}</div></details>
-      <div className="ac-actions"><a className="ac-download" href={clip.downloadUrl} download><Download size={14} />Download WebM</a><button disabled={deleting} onClick={async () => { setDeleting(true); await clipper.remove(clip.id); setDeleting(false); }} aria-label="Delete clip"><Trash2 size={14} /></button></div>
+      <div className="ac-actions">{onShopClip && <button type="button" onClick={() => onShopClip(clip)}>Shop this clip</button>}<a className="ac-download" href={clip.downloadUrl} download><Download size={14} />Download WebM</a><button disabled={deleting} onClick={async () => { setDeleting(true); await clipper.remove(clip.id); setDeleting(false); }} aria-label="Delete clip"><Trash2 size={14} /></button></div>
     </div>
   </article>;
 }
@@ -28,17 +28,17 @@ function PreviousClips({ clipper: c }: { clipper: Clipper }) {
   if (!c.imports.length) return null;
   return <details className="ac-previous"><summary>Previous video clips</summary>{c.imports.map(entry => <div key={`${entry.runId}:${entry.clipId}`}><p className="ac-meta">{entry.title} · {entry.start}–{entry.end}s</p><button disabled={importing || !c.libraryLoaded} onClick={async () => { setImporting(true); await c.importClip(entry); setImporting(false); }}>{importing ? 'Saving…' : 'Add to My Clips'}</button></div>)}</details>;
 }
-export function MyClipsPage({ clipper: c, onBack }: { clipper: Clipper; onBack: () => void }) {
+export function MyClipsPage({ clipper: c, onBack, onShopClip }: { clipper: Clipper; onBack: () => void; onShopClip?: (clip: SavedClip) => void }) {
   return <main className="ac-library-page"><header><span className="ac-eyebrow">CLIPTHAT</span><h1>My Clips</h1><p>Your finished highlights, saved automatically.</p><button onClick={onBack}>Back to studio</button></header>
     {c.error && <p className="ac-error" role="alert">{c.error}</p>}
     <p className="ac-meta">{c.libraryLoaded ? `${c.queue.length} saved clip${c.queue.length === 1 ? '' : 's'}` : 'Loading My Clips…'}</p>
-    <div className="ac-clips">{c.queue.map(clip => <ClipCard key={clip.id} clip={clip} clipper={c} />)}</div>
+    <div className="ac-clips">{c.queue.map(clip => <ClipCard key={clip.id} clip={clip} clipper={c} onShopClip={onShopClip} />)}</div>
     {c.libraryLoaded && !c.queue.length && <p>No clips yet. Go live or add a previous video clip below.</p>}
     <PreviousClips clipper={c} />
     <p className="ac-footnote">Saved on this server for this browser. Your clips survive reloads and server restarts.</p>
   </main>;
 }
-export function LiveClipsPanel({ clipper: c, enabled }: { clipper: Clipper; enabled: boolean }) {
+export function LiveClipsPanel({ clipper: c, enabled, onShopClip }: { clipper: Clipper; enabled: boolean; onShopClip?: (clip: SavedClip) => void }) {
   const lastProbe = c.history.find(item => item.stage === 'probe' || item.stage === 'instant');
   const trigger = lastProbe ? probability(lastProbe.result.answers, 'trigger_detected') : null;
   const status = !enabled ? 'Ready when you go live' : !c.ready ? 'Clipping unavailable' : c.busy ? c.phase : c.autoProbe ? 'Watching for highlights' : 'Auto-clipping paused';
@@ -55,7 +55,7 @@ export function LiveClipsPanel({ clipper: c, enabled }: { clipper: Clipper; enab
     {c.status && !c.ready && <div className="ac-notice"><strong>Clipping needs setup</strong><p>{!c.status.configured && 'Add GEMINI_API_KEY to .env.local and restart the server. '}{!c.status.mediaReady && 'Install FFmpeg and ffprobe. '}Reload after setup.</p></div>}
     {c.error && <div role="alert" className="ac-error">{c.error}</div>}
     <p className="ac-meta" role="status">{c.queue.length ? `${c.queue.length} clip${c.queue.length === 1 ? '' : 's'} captured` : enabled ? 'No highlights yet. Keep streaming, or press Clip That.' : 'Use your camera or Share Screen, then Go Live.'}</p>
-    <div className="ac-live-clips">{c.queue.map(clip => <ClipCard key={clip.id} clip={clip} clipper={c} />)}</div>
+    <div className="ac-live-clips">{c.queue.map(clip => <ClipCard key={clip.id} clip={clip} clipper={c} onShopClip={onShopClip} />)}</div>
     <p className="ac-footnote">Finished clips are saved automatically and survive reloads. No review needed.</p>
   </section>;
 }

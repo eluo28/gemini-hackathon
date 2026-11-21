@@ -108,3 +108,22 @@ test('on-demand stream question selects objects before a cropped-image Shop look
   assert.equal((await matches.json()).messages[0].content, 'No matching products');
   assert.equal(analyses, 1); assert.equal(searches, 1);
 });
+
+
+test('clip questions retain the chosen frame index and timestamp for matching the same sampled frame', async t => {
+  const app = express();
+  app.use('/api/shop', createItemDetectionRouter(async (frames, question) => {
+    assert.equal(question, 'find me that mug');
+    assert.deepEqual(frames.map(frame => frame.timestampSec), [2, 10, 18]);
+    return { items: [{ ...item, frameIndex: 2, timestampSec: frames[2].timestampSec, matchType: 'similar' }], model: 'gemini-4-hydrogen' };
+  }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const response = await fetch(base + '/api/shop/ask-stream', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ question: 'find me that mug', frames: [2, 10, 18].map(timestampSec => ({ ...frame, timestampSec })) }) });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.items[0].frameIndex, 2);
+  assert.equal(result.items[0].timestampSec, 18);
+});

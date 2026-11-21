@@ -1,4 +1,6 @@
 export interface StreamObject {
+  frameIndex: number;
+  timestampSec?: number;
   name: string;
   description: string;
   searchQuery: string;

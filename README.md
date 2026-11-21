@@ -439,3 +439,20 @@ are lost on server restart. A durable file of hashed checkout identities prevent
 repeating in-app completion; uncertain outcomes are reconciled with reads.
 Production use needs real creator authentication and a shared secure session and
 transaction store. Do not log credentials, private checkout URLs or addresses.
+
+### Shop a saved clip
+
+While in a room, open **My Clips** and choose **Shop this clip**. This inserts
+`@shop look in {clip:CLIP_ID}, ` into the existing Chat composer. Add your question
+and send it. `{this clip}` also resolves the selected clip (or the only saved
+clip). Unknown or deleted references are rejected rather than falling back to
+live video.
+
+Clip shopping takes three frames at 10%, 50%, and 90% of the saved clip, sends
+those three images in one Gemini request, and reuses the live Shop matching and
+cart flow. Each object is cropped from its returned source-frame index. The
+stream can be offline. Sampling may miss an object visible only between those
+frames; this does not analyze the entire video. Only clips in the viewer's
+private My Clips library are supported; arbitrary video URLs are not fetched.
+Gifts require a clip from the current room so the destination cannot silently
+switch to another streamer; personal purchases work for any saved clip.
