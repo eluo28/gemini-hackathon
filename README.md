@@ -1,3 +1,37 @@
+# Clip Gen
+
+## 3D View
+
+Open `/3d` for the isolated spatial viewer: bundled flower depth/stereo demos,
+local files (never uploaded), URL loading (`?src=` stereo or `?rgbd=` RGB+depth),
+look-around relief, 2D, wiggle, red/cyan glasses and frame signal checks.
+The original vanilla Three.js modules run in an iframe to isolate styles and
+release their document/listeners on unmount. WebGL and media resources are
+also released on page exit. Chrome matches the studio's white/slate palette.
+Enter VR / Open in AR enable only for a supported WebXR immersive session and
+stereo media; use HTTPS or localhost and a compatible headset browser.
+RGB+depth is 2.5D reprojection, not volumetric or 360° video. Headset perception,
+comfort and physical phone tilt require real-device testing. Cross-origin
+videos must permit CORS; stereo is full-width left-eye/right-eye SBS.
+
+Open `/clip-gen` for isolated Gemini Omni character replacement (no studio imports).
+Requires `ffmpeg`/`ffprobe` on PATH and server-side `GEMINI_API_KEY`.
+Upload a video or use the sample, click a person, refine the description, add 1–3
+reference photos or camera selfies, then swap. Compare synchronized results or download MP4.
+The edit requests whole-person replacement: identity, body/build, chest, all visible
+skin tone and clothing follow the references. Target outfit descriptions locate the
+person only. Motion, pose and scene remain; generative results may need a retry.
+Videos: at least 3 seconds, up to 200 MiB; first 10 seconds normalized to silent H.264.
+Photos: JPEG/PNG/WebP, up to 15 MiB and 30 megapixels each. Public figures may be blocked.
+Use photos you have permission to use; generation usually takes about a minute.
+Camera requires localhost or HTTPS. Description failures fall back to click position.
+`CLIP_GEN_WORK_DIR` defaults to gitignored `.data/clip-gen`; `CLIP_GEN_DESCRIBE_MODEL`
+defaults to `gemini-4-hydrogen`. Jobs/IDs are in memory; restart loses them, files remain.
+Remove work files manually when finished. Uploads go to Gemini Files API and its retention applies.
+This trusted-environment prototype has no authentication, quotas or durable queue.
+Sample: [Anna Shvets, Pexels](https://www.pexels.com/video/two-women-dancing-and-hugging-4800574/),
+under the [Pexels license](https://www.pexels.com/license/).
+
 # ClipThat
 
 **ClipThat** is a modern multi-user live streaming studio built with React, TypeScript, Express, WebSockets, and WebRTC. Multiple hosts and co-hosts can stream audio, video, and screens together while viewers watch and interact in real-time chat.
