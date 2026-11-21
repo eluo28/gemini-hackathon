@@ -29,3 +29,21 @@ test('clip sampling stays within the saved video and rejects unusable duration',
   assert.ok(clipSampleTimes(0.005).every(time => time >= 0 && time < 0.005));
   for (const invalid of [0, -1, NaN, Infinity]) assert.throws(() => clipSampleTimes(invalid), /duration/);
 });
+
+test('natural clip titles route the exact production command to the saved clip, including quoted words', () => {
+  const clip = { ...first, title: "Laughing Video Call Moment With 'Clip It' Reaction" };
+  const question = "in the Laughing Video Call Moment With 'Clip It' Reaction clip, find me the plant";
+  assert.equal(hasClipReference(question), true);
+  assert.deepEqual(resolveClipQuestion(question, [second, clip]), { clip, question: 'find me the plant' });
+  assert.equal(resolveClipQuestion('look in the laughing video call moment with “Clip It” reaction clip, find the plant', [clip])!.clip, clip);
+  assert.equal(resolveClipQuestion('in The Garden clip, find the pot', [{ ...first, title: 'The Garden' }])!.clip.id, first.id);
+  assert.equal(resolveClipQuestion('find that hair clip', [clip]), null);
+});
+
+test('missing, malformed and ambiguous title references never fall back to the live stream', () => {
+  const clip = { ...first, title: 'Garden' };
+  assert.throws(() => resolveClipQuestion('in the missing clip, find the plant', [clip]), /not in your saved clips/);
+  assert.throws(() => resolveClipQuestion('in the Garden clip, find the plant', [clip, { ...second, title: 'Garden' }]), /More than one/);
+  assert.throws(() => resolveClipQuestion('in the Garden clip find the plant', [clip]), /Use @shop/);
+  assert.throws(() => resolveClipQuestion('in the Garden clip, ', [clip]), /Add a question/);
+});
