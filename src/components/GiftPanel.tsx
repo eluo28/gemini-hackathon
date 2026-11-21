@@ -29,7 +29,7 @@ function Notices({ messages }: { messages: GiftMessage[] }) {
 }
 
 const EMPTY_PRODUCTS: GiftProduct[] = [];
-type ShoppingActions = { add: (product: GiftProduct, mode: PurchaseMode) => void; busy: boolean; pending: PendingPurchase | null; blockedReason: string; reviewCart: () => void };
+type ShoppingActions = { add: (product: GiftProduct, mode: PurchaseMode) => void; busy: boolean; pending: PendingPurchase | null; blockedReason: string; reviewCart: () => void; cartShop?: string };
 
 export function GiftPanel({ roomId, recipient, initialProducts = EMPTY_PRODUCTS, chat, onClose, compact = false, onConnectionChange }: { roomId: string; recipient: string; initialProducts?: GiftProduct[]; chat?: ReactNode | ((actions: ShoppingActions) => ReactNode); onClose?: () => void; compact?: boolean; onConnectionChange?: (connected: boolean) => void }) {
   useEffect(() => () => { onConnectionChange?.(false); }, [onConnectionChange]);
@@ -247,7 +247,7 @@ export function GiftPanel({ roomId, recipient, initialProducts = EMPTY_PRODUCTS,
         <a href={connection.url} target="_blank" rel="noreferrer" className="font-semibold underline">Sign in and approve on Shop</a>
         <p>Code: <strong>{connection.code}</strong>. Waiting for your approval…</p>
       </div>}
-      {state.connected && (typeof chat === 'function' ? chat({ add: addProduct, busy: lockCart, pending: pendingPurchase, blockedReason, reviewCart }) : chat)}
+      {state.connected && (typeof chat === 'function' ? chat({ add: addProduct, busy: lockCart, pending: pendingPurchase, blockedReason, reviewCart, cartShop: state.cart?.shop }) : chat)}
       {state.notice && <p role="status" className="rounded-lg bg-slate-50 p-3 text-xs text-slate-700">{state.notice}</p>}
       {state.connected && added && <p role="status" className="text-xs font-medium text-emerald-700">{added}</p>}
     </>}

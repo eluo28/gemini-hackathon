@@ -263,7 +263,7 @@ function StudioApp() {
             onShopQuestion={question => shopRef.current?.ask(question)}
             shoppingPanel={<Suspense fallback={<p className="p-3 text-xs">Opening Shop…</p>}>
               <GiftPanel compact onConnectionChange={setShopConnected} roomId={studio.roomId} recipient={currentStreamer?.displayName || 'the streamer'}
-                chat={({ add, busy: purchaseBusy, pending: pendingPurchase, blockedReason, reviewCart }) => <StreamShopChat roomId={studio.roomId} clips={clipper.queue} purchaseBlockReason={blockedReason} onReviewCart={reviewCart} pendingPurchase={pendingPurchase} purchaseBusy={purchaseBusy} compact embedded controllerRef={shopRef} onBusyChange={setShopBusy} isLive={studio.isLive}
+                chat={({ add, busy: purchaseBusy, pending: pendingPurchase, blockedReason, reviewCart, cartShop }) => <StreamShopChat roomId={studio.roomId} clips={clipper.queue} cartShop={cartShop} purchaseBlockReason={blockedReason} onReviewCart={reviewCart} pendingPurchase={pendingPurchase} purchaseBusy={purchaseBusy} compact embedded controllerRef={shopRef} onBusyChange={setShopBusy} isLive={studio.isLive}
                   sources={studio.participants.filter(p => p.role !== 'viewer' && (p.videoEnabled || p.screenSharing)).map(p => ({ id: p.id, name: p.name }))}
                   capture={sourceId => { if (!captureRef.current) throw new Error('The stream is still connecting.'); return captureRef.current.capture(sourceId); }}
                   canGift={Boolean(currentStreamer?.giftingEnabled)} onGift={product => add(product, 'gift')} onBuy={product => add(product, 'self')} />} />
