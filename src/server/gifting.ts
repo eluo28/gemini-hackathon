@@ -25,7 +25,7 @@ const secureUrl = (value: unknown): string | undefined => {
 function links(raw: unknown): { href: string; label: string }[] {
   return Array.isArray(raw) ? raw.flatMap(value => secureUrl(value?.href || value?.url) ? [{ href: (value.href || value.url) as string, label: String(value.title || value.label || value.type || 'View details') }] : []) : [];
 }
-function messages(document: Doc): GiftMessage[] {
+export function messagesFrom(document: Doc): GiftMessage[] {
   return (Array.isArray(document.messages) ? document.messages : []).map((message: Doc) => ({
     content: String(message.content || message.message || message.code || 'Checkout notice'), severity: message.severity,
     code: message.code, links: links(message.links),
@@ -149,7 +149,7 @@ export function createGiftingService(options: {
           instruments: (checkout.payment?.instruments || []).map((instrument: Doc, index: number) => ({ key: f.review?.instrumentKeys[index] || '', label: String(instrument.display?.label || instrument.display?.name || instrument.display?.description || [instrument.display?.brand, instrument.display?.last_digits].filter(Boolean).join(' ') || `Payment method ${index + 1} (${instrument.type})`) })),
           delivery: (checkout.fulfillment?.methods || []).flatMap((method: Doc, mi: number) => (method.groups || []).map((group: Doc, gi: number) => ({ methodKey: String(mi), groupKey: String(gi), selected: group.selected_option_id || null, options: (group.options || []).map((option: Doc) => ({ key: option.id, label: String(option.title || option.display_text || option.name || option.id), amount: option.totals?.find((total: Doc) => total.type === 'total')?.amount ?? option.amount })) }))),
         } : null,
-        messages: checkout ? messages(checkout) : cart ? messages(cart) : [],
+        messages: checkout ? messagesFrom(checkout) : cart ? messagesFrom(cart) : [],
       };
     },
     async connect(session: ViewerSession) {
@@ -176,12 +176,12 @@ export function createGiftingService(options: {
     async search(session: ViewerSession, roomId: string, query: string) {
       const r = recipient(roomId);
       const document = await call(session, 'search_catalog', { catalog: { query, context: { address_country: r.shippingAddress!.country }, pagination: { limit: 6 } } });
-      return { products: productsFrom(document), messages: messages(document) };
+      return { products: productsFrom(document), messages: messagesFrom(document) };
     },
     async product(session: ViewerSession, roomId: string, productId: string, selected: {name: string; label: string}[]) {
       const r = recipient(roomId);
       const document = await call(session, 'get_product', { catalog: { id: productId, selected, context: { address_country: r.shippingAddress!.country } } });
-      return { products: productsFrom(document), messages: messages(document) };
+      return { products: productsFrom(document), messages: messagesFrom(document) };
     },
     async add(session: ViewerSession, roomId: string, productId: string, variantId: string, selected: {name: string; label: string}[]) {
       const r = recipient(roomId);

@@ -143,6 +143,7 @@ export function ParticipantVideoTile({
   return (
     <div
       data-testid={`video-tile-${participant.id}`}
+      data-participant-id={participant.id}
       className="relative aspect-video rounded-2xl overflow-hidden bg-slate-100 border border-slate-200/90 shadow-xs"
     >
       {/* Always-mounted hidden audio element for remote participants */}
@@ -174,6 +175,7 @@ export function ParticipantVideoTile({
 
       {showRelayImage ? (
         <img
+          data-live-relay="true"
           src={relayFrame}
           alt={`${participant.name} live stream`}
           className="absolute inset-0 w-full h-full object-cover"

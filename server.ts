@@ -1,4 +1,5 @@
 import { clipEvent, clipTelemetryFile } from './src/server/clipTelemetry';
+import { createStreamMatchRouter } from './src/server/streamMatchRoutes';
 import { createGiftingService } from './src/server/gifting';
 import { createGiftingRouter } from './src/server/giftingRoutes';
 import { createDemoGiftingService } from './src/server/giftingDemo';
@@ -232,6 +233,7 @@ async function startServer() {
   app.use('/api/clips', createClipRouter());
   app.use('/api/shop', createItemDetectionRouter());
   app.use('/api/clip-gen', createClipGenRouter());
+  app.use('/api/shop', createStreamMatchRouter());
   app.use(express.json({ limit: '256kb' }));
   app.use('/api/shop', createShopRouter());
   const onGiftConfirmed = (alert: GiftAlert) => {

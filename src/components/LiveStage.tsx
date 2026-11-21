@@ -1,3 +1,5 @@
+import { StreamShopChat } from './StreamShopChat';
+import type { GiftProduct } from '../shared/gifting';
 import { lazy, Suspense } from 'react';
 import type { GiftAlert } from '../shared/gifting';
 const GiftPanel = lazy(() => import('./GiftPanel').then(module => ({ default: module.GiftPanel })));
@@ -55,6 +57,7 @@ interface LiveStageProps {
   directoryRooms: RoomSummary[];
   recentRooms: RecentRoomEntry[];
   localStream: MediaStream | null;
+  usingSyntheticFeed: boolean;
   remoteStreams: Record<string, MediaStream>;
   remoteRelayFrames: Record<string, string>;
   peerConnectionStates: Record<string, PeerRtcState>;
@@ -112,6 +115,7 @@ export function LiveStage({
   directoryRooms,
   recentRooms,
   localStream,
+  usingSyntheticFeed,
   remoteStreams,
   remoteRelayFrames,
   peerConnectionStates,
@@ -144,6 +148,8 @@ export function LiveStage({
   onReportAudioBlocked,
   onTriggerClipMark,
 }: LiveStageProps) {
+  const stageGridRef = useRef<HTMLDivElement>(null);
+  const [giftProducts, setGiftProducts] = useState<GiftProduct[]>([]);
   const [showGifts, setShowGifts] = useState(false);
   const [streamer, setStreamer] = useState<StreamerProfile | null>(null);
 
@@ -244,6 +250,26 @@ export function LiveStage({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+  function captureStreamFrame(sourceId: string): HTMLCanvasElement {
+    if (!isLive) throw new Error('The stream needs to be live before you can ask about an object.');
+    const participant = broadcasters.find(person => person.id === sourceId);
+    if (!participant || (!participant.videoEnabled && !participant.screenSharing)) throw new Error('Choose a stream with an active camera or screen share.');
+    if (sourceId === selfId && usingSyntheticFeed && !screenSharing) throw new Error('The standby camera is not a real video feed. Turn on a camera or share a screen containing the object.');
+    const tile = Array.from(stageGridRef.current?.querySelectorAll<HTMLElement>('[data-participant-id]') || []).find(element => element.dataset.participantId === sourceId);
+    const video = tile?.querySelector('video');
+    const relay = tile?.querySelector<HTMLImageElement>('img[data-live-relay]');
+    const source = video && video.readyState >= 2 && video.videoWidth > 0 && !video.classList.contains('hidden') ? video : relay && relay.complete && relay.naturalWidth > 0 ? relay : null;
+    if (!source) throw new Error('The live video is still connecting. Wait for a clear frame, then ask again.');
+    const width = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+    const height = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
+    const scale = Math.min(1, 960 / width, 540 / height);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale)); canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Your browser cannot capture this stream.');
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
 
   const { broadcasters, viewers } = partitionParticipants(participants);
   const hostParticipant =
@@ -356,7 +382,7 @@ export function LiveStage({
             {selfRole === 'host' && canEditProfile && (
               <button type="button" onClick={() => void openProfileForm()} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold">Edit profile</button>
             )}
-            <button type="button" disabled={!streamer.giftingEnabled} onClick={() => setShowGifts(true)} aria-describedby="gifting-status" className="rounded-xl bg-violet-700 px-4 py-2 text-xs font-semibold text-white disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed">
+            <button type="button" disabled={!streamer.giftingEnabled} onClick={() => { setGiftProducts([]); setShowGifts(true); }} aria-describedby="gifting-status" className="rounded-xl bg-violet-700 px-4 py-2 text-xs font-semibold text-white disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed">
               Gift to {streamer.displayName}
             </button>
           </div>
@@ -366,7 +392,7 @@ export function LiveStage({
       )}
 
       {lastGift && lastGift.roomId === roomId && <div role="status" className="mx-5 md:mx-7 mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">{lastGift.simulated ? 'Demo gift confirmed for ' : 'A viewer sent a gift to '}{lastGift.recipient}!</div>}
-      {showGifts && streamer && <Suspense fallback={<p className="mx-5 mb-4 text-sm">Opening gifts…</p>}><GiftPanel key={roomId} roomId={roomId} recipient={streamer.displayName} onClose={() => setShowGifts(false)} /></Suspense>}
+      {showGifts && streamer && <Suspense fallback={<p className="mx-5 mb-4 text-sm">Opening gifts…</p>}><GiftPanel key={`${roomId}:${giftProducts[0]?.variantId || 'cart'}`} roomId={roomId} initialProducts={giftProducts} recipient={streamer.displayName} onClose={() => setShowGifts(false)} /></Suspense>}
       {!streamer && selfRole === 'host' && canEditProfile && !profileFormOpen && (
         <div className="mx-5 md:mx-7 mb-4 rounded-2xl border border-slate-200 bg-white p-4">
           <p className="mb-3 text-sm text-slate-600">Add your creator profile and a delivery address for future gifts.</p>
@@ -533,7 +559,7 @@ export function LiveStage({
       {/* Main Video Stage + Sleek Control Dock + Creator Bio Below Fold */}
       <div className="px-5 md:px-7 pb-6 flex-1 flex flex-col gap-4">
         <div className="flex-1 flex items-center">
-          <div className={`grid gap-4 ${gridColsClass}`} data-testid="stage-video-grid">
+          <div ref={stageGridRef} className={`grid gap-4 ${gridColsClass}`} data-testid="stage-video-grid">
             {broadcasters.length === 0 ? (
               <div className="relative aspect-video rounded-2xl overflow-hidden bg-white border border-slate-200/90 shadow-xs flex items-center justify-center p-8 text-center">
                 <div className="max-w-sm space-y-1.5">
@@ -570,6 +596,11 @@ export function LiveStage({
             )}
           </div>
         </div>
+
+        <StreamShopChat key={roomId} isLive={isLive}
+          sources={broadcasters.filter(person => person.videoEnabled || person.screenSharing).map(person => ({ id: person.id, name: person.name }))}
+          capture={captureStreamFrame} canGift={Boolean(streamer?.giftingEnabled)}
+          onGift={product => { setGiftProducts([product]); setShowGifts(true); }} />
 
         {/* Sleek Broadcast Control Dock */}
         {selfRole !== 'viewer' ? (

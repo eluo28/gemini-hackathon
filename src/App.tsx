@@ -181,6 +181,7 @@ function StudioApp() {
           directoryRooms={studio.directoryRooms}
           recentRooms={studio.recentRooms}
           localStream={studio.localStream}
+          usingSyntheticFeed={studio.usingSyntheticFeed}
           remoteStreams={studio.remoteStreams}
           remoteRelayFrames={studio.remoteRelayFrames}
           peerConnectionStates={studio.peerConnectionStates}

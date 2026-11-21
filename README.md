@@ -362,7 +362,7 @@ Wimbledon suggestion starts as a draft; quality metrics require reviewed referen
 ## Viewer product gifting (local branch)
 
 No wishlist is needed. A creator enables gifts with a saved delivery address;
-viewers click **Gift to [creator]**, search products, choose size/color, add items
+viewers ask about an object in the stream, choose a matching product and size/color, add items
 to a single-merchant cart, connect Shop, and review the full merchant checkout.
 The viewer selects an offered payment method and explicitly confirms the store,
 items, quantities, current total and recipient before payment is submitted.
@@ -381,25 +381,19 @@ order and verified gift recipient generates a room-wide gift alert. Merchant
 support for a viewer-funded third-party recipient still requires a real Shop
 checkout test; local fixtures do not establish that support.
 
-### Test without a charge
+### Local testing
 
-Run `npm run dev:gifting-demo`, then open `http://localhost:3031`.
-This explicit local-only mode simulates Shop sign-in, products, carts and payment;
-it makes no outbound Shop calls for the gifting panel. A prominent **LOCAL DEMO**
-banner and **Place simulated gift order** button distinguish it from real checkout.
-Production startup rejects this mode.
+Run the normal local server with a Gemini API key, join as a host, turn on a
+camera or screen share, and go live. In **Ask about this stream**, ask about a
+visible object. Choose **Gift this item** from a returned product card, then
+review options and add it to the gift cart. A viewer tab can ask independently.
+No Gemini or catalog calls happen until a question is submitted.
 
-1. Join as a host and use **Set up creator profile** (or **Edit profile**).
-2. Enter a test delivery address and check **Enable product gifts**; save.
-3. Open a second tab as a viewer in the same room.
-4. Click **Gift to [creator]**, **Connect demo buyer**, and search for a mug.
-5. Select its color, add it to cart, adjust quantity, and review checkout.
-6. Select the demo card, confirm the review, and place the simulated order.
-7. Check the confirmed order and the room-wide demo gift alert.
-
-Demo profiles are isolated in ignored `.data/gifting-demo`; there is no seeded
-creator, so users enter their own setup through the form. These demo orders are
-not Shopify test orders and prove no live payment or fulfillment behavior.
+For isolated cart/payment fixtures, the existing `npm run dev:gifting-demo`
+command still provides simulated backend operations and rejects production use.
+It does not simulate the new stream assistant or real product recognition; use
+the targeted tests for that fixture flow. Do not treat those results as real
+Shop payment validation. The primary UI test path now uses real Shop mode.
 
 ### Real Shop mode
 
@@ -423,3 +417,36 @@ existing first-claim browser cookie. Buyer sessions are in memory and expire aft
 any submitted order before starting another purchase. Production use needs real
 creator authentication and a shared secure session/transaction store. Do not log
 Shop tokens, checkout IDs/URLs, payment instruments or recipient addresses.
+
+
+## Ask about an object in the live stream
+
+The live stage now has an **Ask about this stream** chat panel. Viewers can ask
+“What is that mug in the background?” and select a broadcaster if multiple people
+are on stage. There are no background Gemini requests or polling timers.
+
+One submitted question freezes a frame from the visible live video (or its relay
+image), bounded to 960×540. The backend sends the question and image to
+`gemini-4-hydrogen` with low thinking and a structured object-detection schema.
+It identifies at most two requested objects and returns bounding boxes. The
+browser crops those boxes from the same frozen frame, then Shop MCP searches each
+crop using image similarity plus the visual description. Returned cards are
+labeled **Similar find on Shop**, not exact product identifications. Selecting
+**Gift this item** opens the existing gift panel with that product; adding it
+still requires an explicit action and fresh option/availability checks.
+
+The old standalone gift-search bar is removed. The gift panel remains available
+for current carts and checkout; new products come from the stream assistant.
+
+The assistant requires a live camera or screen share. It does not analyze profile
+avatars or the local synthetic standby feed. Frames/crops are kept only for the
+current request; no uploads or transcripts are saved on the server, and catalog
+results are not cached or rehosted. The UI keeps a short text exchange history
+and only the current set of product cards. Each question is grounded independently
+in a fresh frame; earlier questions are not sent as model conversation history.
+
+Local setup: set `GEMINI_API_KEY` in the ignored server environment file and
+optionally `GEMINI_ITEM_MODEL` (default `gemini-4-hydrogen`), then restart the local
+server. No Gemini calls happen until **Ask** is pressed. Missing keys, unclear
+objects, unsupported video, and Shop errors are shown in the panel. This feature
+uses image snapshots, not Gemini's continuous Live API.

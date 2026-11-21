@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GiftMessage, GiftProduct, GiftView, ShopConnection } from '../shared/gifting';
 
-export function giftMoney(amount: number, currency: string) {
-  try { const format = new Intl.NumberFormat(undefined, { style: 'currency', currency }); return format.format(amount / 10 ** (format.resolvedOptions().maximumFractionDigits ?? 2)); }
-  catch { return `${amount} ${currency} (minor units)`; }
-}
+import { formatMoney as giftMoney } from '../utils/money';
 function Notices({ messages }: { messages: GiftMessage[] }) {
   // Compatibility with the running backend, which included the same checkout
   // notices twice. Collapse only a repeated whole list, preserving its contents.
@@ -19,12 +16,10 @@ function Notices({ messages }: { messages: GiftMessage[] }) {
   </div>)}</>;
 }
 
-export function GiftPanel({ roomId, recipient, onClose }: { roomId: string; recipient: string; onClose: () => void }) {
+export function GiftPanel({ roomId, recipient, initialProducts = [], onClose }: { roomId: string; recipient: string; initialProducts?: GiftProduct[]; onClose: () => void }) {
   const [state, setState] = useState<GiftView | null>(null);
-  const [query, setQuery] = useState('');
-  const [products, setProducts] = useState<GiftProduct[]>([]);
+  const [products, setProducts] = useState<GiftProduct[]>(initialProducts);
   const [searchNotices, setSearchNotices] = useState<GiftMessage[]>([]);
-  const [searched, setSearched] = useState(false);
   const [connection, setConnection] = useState<ShopConnection | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -105,12 +100,8 @@ export function GiftPanel({ roomId, recipient, onClose }: { roomId: string; reci
         <p>Code: <strong>{connection.code}</strong>. Waiting for your approval…</p>
       </div>}
       {!checkout && <>
-        <form onSubmit={e => { e.preventDefault(); void run(async () => { const result = await api<{products: GiftProduct[]; messages: GiftMessage[]}>('/search', { roomId, query }); setProducts(result.products); setSearchNotices(result.messages); setSearched(true); }); }} className="flex flex-wrap gap-2">
-          <label className="flex-1 min-w-48"><span className="sr-only">Search gifts</span><input value={query} onChange={e => setQuery(e.target.value)} required maxLength={500} placeholder="Search for a gift, e.g. ceramic mug" className="w-full rounded-xl border border-slate-300 p-3 text-sm" /></label>
-          <button disabled={busy} className="rounded-xl bg-violet-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Search gifts</button>
-        </form>
         <Notices messages={searchNotices} />
-        {searched && !products.length && <p className="text-sm text-slate-500">No matching products. Try another search.</p>}
+        {!products.length && <p className="text-sm text-slate-500">Ask about an object in the live stream, then choose “Gift this item” from its product matches.</p>}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{products.map(product => <article key={product.id} className="rounded-xl border border-slate-200 p-3 space-y-2">
           {product.image && <img src={product.image} alt={product.title} loading="lazy" className="h-32 w-full object-contain" />}
           <h3 className="text-sm font-semibold">{product.title}</h3><p className="text-xs text-slate-500">{product.seller}</p>
