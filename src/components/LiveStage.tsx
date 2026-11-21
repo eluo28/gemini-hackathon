@@ -30,6 +30,7 @@ import type { MediaDeviceOption, StudioProfile } from '../hooks/useStudioRoom';
 import { CreatorProfileSection } from './CreatorProfileSection';
 import { RoomSwitcherDrawer } from './RoomSwitcherDrawer';
 import { ParticipantVideoTile } from './VideoTile';
+import type { PeerRtcState } from '../utils/videoPlayback';
 
 interface LiveStageProps {
   roomId: string;
@@ -52,6 +53,7 @@ interface LiveStageProps {
   localStream: MediaStream | null;
   remoteStreams: Record<string, MediaStream>;
   remoteRelayFrames: Record<string, string>;
+  peerConnectionStates: Record<string, PeerRtcState>;
   audioEnabled: boolean;
   videoEnabled: boolean;
   screenSharing: boolean;
@@ -107,6 +109,7 @@ export function LiveStage({
   localStream,
   remoteStreams,
   remoteRelayFrames,
+  peerConnectionStates,
   audioEnabled,
   videoEnabled,
   screenSharing,
@@ -426,6 +429,7 @@ export function LiveStage({
                     participant={p}
                     stream={stream}
                     relayFrame={relayFrame}
+                    peerConnectionState={isSelf ? undefined : peerConnectionStates[p.id]}
                     isSelf={isSelf}
                     isPeerMuted={Boolean(mutedPeerIds[p.id])}
                     audioUnlockSeq={audioUnlockSeq}

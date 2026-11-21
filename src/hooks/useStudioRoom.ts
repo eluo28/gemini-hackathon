@@ -24,6 +24,13 @@ import {
   removeRecentRoomHistory,
   upsertRecentRoomHistory,
 } from '../utils/roomLifecycle';
+import {
+  deriveEffectivePeerState,
+  getRenegotiationAction,
+  isPeerRtcHealthy,
+  shouldAttemptIceRestart,
+  type PeerRtcState,
+} from '../utils/videoPlayback';
 import { dispatchClipToSink } from '../services/clipSink';
 import type {
   ClientWsMessage,
@@ -95,7 +102,10 @@ interface PeerRecord {
   pc: RTCPeerConnection;
   makingOffer: boolean;
   ignoreOffer: boolean;
+  needsRenegotiation: boolean;
   pendingCandidates: RTCIceCandidateInit[];
+  disconnectTimer: number | null;
+  lastIceRestartAtMs: number;
 }
 
 function createClientParticipantId(): string {
@@ -216,6 +226,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   });
   const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [remoteRelayFrames, setRemoteRelayFrames] = useState<Record<string, string>>({});
+  const [peerConnectionStates, setPeerConnectionStates] = useState<Record<string, PeerRtcState>>({});
   const [mutedPeerIds, setMutedPeerIds] = useState<Record<string, boolean>>({});
   const [audioBlocked, setAudioBlocked] = useState(false);
   const [audioUnlockSeq, setAudioUnlockSeq] = useState(0);
@@ -260,10 +271,12 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const reconnectAttemptRef = useRef<number>(0);
   const rtcConfigRef = useRef<RTCConfiguration>(RTC_CONFIG);
+  const participantsRef = useRef<RoomParticipant[]>([]);
 
   streamStartedAtRef.current = streamStartedAt;
   hasJoinedRef.current = hasJoined;
   mutedPeerIdsRef.current = mutedPeerIds;
+  participantsRef.current = participants;
 
   useEffect(() => {
     let active = true;
@@ -332,7 +345,8 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const playRelayedAudioChunk = useCallback(
     (fromId: string, pcm16: string, sampleRate: number) => {
       if (mutedPeerIdsRef.current[fromId]) return;
-      if (peersRef.current.get(fromId)?.pc.connectionState === 'connected') {
+      const peerPc = peersRef.current.get(fromId)?.pc;
+      if (isPeerRtcHealthy(peerPc?.connectionState, peerPc?.iceConnectionState)) {
         return;
       }
       const ctx = ensurePlaybackContext();
@@ -557,27 +571,55 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     return stream;
   }, []);
 
-  const syncTracksToPeers = useCallback((stream: MediaStream | null) => {
-    if (!stream) return;
-    peersRef.current.forEach(({ pc }) => {
+  const attachLocalTracksToPeer = useCallback(
+    (pc: RTCPeerConnection, stream: MediaStream | null): boolean => {
+      if (!stream || profileRef.current.role === 'viewer') return false;
+      let directionChanged = false;
       const transceivers = pc.getTransceivers();
       stream.getTracks().forEach((track) => {
         const matchingTransceiver = transceivers.find(
           (t) =>
-            t.sender.track?.kind === track.kind ||
-            t.receiver.track?.kind === track.kind
+            t.direction !== 'stopped' &&
+            (t.sender.track?.kind === track.kind ||
+              t.receiver.track?.kind === track.kind)
         );
         if (matchingTransceiver) {
-          if (matchingTransceiver.direction === 'recvonly') {
+          if (matchingTransceiver.direction === 'recvonly' || matchingTransceiver.direction === 'inactive') {
             matchingTransceiver.direction = 'sendrecv';
+            directionChanged = true;
           }
           matchingTransceiver.sender.replaceTrack(track).catch(() => {});
         } else {
           pc.addTrack(track, stream);
+          directionChanged = true;
         }
       });
-    });
-  }, []);
+      return directionChanged;
+    },
+    []
+  );
+
+  const syncTracksToPeers = useCallback(
+    (stream: MediaStream | null) => {
+      if (!stream || profileRef.current.role === 'viewer') return;
+      peersRef.current.forEach((rec, peerId) => {
+        const changed = attachLocalTracksToPeer(rec.pc, stream);
+        if (!changed) return;
+        const action = getRenegotiationAction({
+          signalingState: rec.pc.signalingState,
+          makingOffer: rec.makingOffer,
+          isPolite: isPolitePeer(selfIdRef.current, peerId),
+          hasRemoteDescription: Boolean(rec.pc.currentRemoteDescription),
+        });
+        if (action === 'defer') {
+          rec.needsRenegotiation = true;
+        } else if (action === 'send-now') {
+          void sendOfferToPeerRef.current(peerId, rec);
+        }
+      });
+    },
+    [attachLocalTracksToPeer]
+  );
 
   const startLocalMedia = useCallback(
     async (preferCamera = true, audioDeviceId?: string, videoDeviceId?: string) => {
@@ -713,18 +755,65 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   }, []);
 
   const closeAllPeers = useCallback(() => {
-    peersRef.current.forEach(({ pc }) => pc.close());
+    peersRef.current.forEach((rec) => {
+      if (rec.disconnectTimer) window.clearTimeout(rec.disconnectTimer);
+      rec.pc.close();
+    });
     peersRef.current.clear();
     remoteStreamsMapRef.current.clear();
     setRemoteStreams({});
     setRemoteRelayFrames({});
+    setPeerConnectionStates({});
   }, []);
+
+  const logRtcDiagnostic = useCallback(
+    (
+      event: string,
+      peerId: string,
+      pc: RTCPeerConnection,
+      extra?: Record<string, unknown>,
+      severity: 'info' | 'warn' = 'info'
+    ) => {
+      const effectiveState = deriveEffectivePeerState(pc.connectionState, pc.iceConnectionState);
+      const remoteStream = remoteStreamsMapRef.current.get(peerId);
+      const remoteTracks = remoteStream
+        ? remoteStream
+            .getTracks()
+            .map((t) => `${t.kind}:${t.readyState}:${t.muted ? 'muted' : 'unmuted'}`)
+        : [];
+      const payload = {
+        ts: new Date().toISOString(),
+        event,
+        roomId: roomIdRef.current,
+        selfId: selfIdRef.current,
+        peerId,
+        polite: isPolitePeer(selfIdRef.current, peerId),
+        connectionState: pc.connectionState,
+        iceConnectionState: pc.iceConnectionState,
+        effectiveState,
+        iceGatheringState: pc.iceGatheringState,
+        signalingState: pc.signalingState,
+        remoteTracks,
+        ...extra,
+      };
+      if (severity === 'warn') {
+        console.warn('[ClipThat][WebRTC]', payload);
+      } else {
+        console.info('[ClipThat][WebRTC]', payload);
+      }
+    },
+    []
+  );
 
   const sendOfferToPeer = useCallback(
     async (peerId: string, rec: PeerRecord) => {
-      if (rec.makingOffer || rec.pc.signalingState !== 'stable') return;
+      if (rec.makingOffer || rec.pc.signalingState !== 'stable') {
+        rec.needsRenegotiation = true;
+        return;
+      }
       try {
         rec.makingOffer = true;
+        rec.needsRenegotiation = false;
         await rec.pc.setLocalDescription();
         if (rec.pc.localDescription) {
           sendWs({
@@ -733,17 +822,23 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
             offer: rec.pc.localDescription.toJSON(),
           });
         }
-      } catch {
-        // Ignore negotiation glare; handled by Perfect Negotiation
+      } catch (err) {
+        logRtcDiagnostic(
+          'signaling-error',
+          peerId,
+          rec.pc,
+          { phase: 'sendOffer', error: err instanceof Error ? err.message : String(err) },
+          'warn'
+        );
       } finally {
         rec.makingOffer = false;
       }
     },
-    [sendWs]
+    [logRtcDiagnostic, sendWs]
   );
 
   const ensurePeerRecord = useCallback(
-    (peerId: string): PeerRecord => {
+    (peerId: string, options: { isOfferer?: boolean } = {}): PeerRecord => {
       const existing = peersRef.current.get(peerId);
       if (existing) return existing;
 
@@ -752,24 +847,35 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
         pc,
         makingOffer: false,
         ignoreOffer: false,
+        needsRenegotiation: false,
         pendingCandidates: [],
+        disconnectTimer: null,
+        lastIceRestartAtMs: 0,
       };
       peersRef.current.set(peerId, record);
+      setPeerConnectionStates((prev) => ({
+        ...prev,
+        [peerId]: deriveEffectivePeerState(pc.connectionState, pc.iceConnectionState),
+      }));
 
-      if (localStreamRef.current && profileRef.current.role !== 'viewer') {
-        const tracks = localStreamRef.current.getTracks();
-        tracks.forEach((track) => {
-          pc.addTrack(track, localStreamRef.current!);
-        });
-        if (!tracks.some((t) => t.kind === 'video')) {
+      // Only pre-create transceivers when initiating an offer. Answerers let
+      // setRemoteDescription(offer) create matching m-line transceivers cleanly.
+      if (options.isOfferer) {
+        if (localStreamRef.current && profileRef.current.role !== 'viewer') {
+          const tracks = localStreamRef.current.getTracks();
+          tracks.forEach((track) => {
+            pc.addTrack(track, localStreamRef.current!);
+          });
+          if (!tracks.some((t) => t.kind === 'video')) {
+            pc.addTransceiver('video', { direction: 'recvonly' });
+          }
+          if (!tracks.some((t) => t.kind === 'audio')) {
+            pc.addTransceiver('audio', { direction: 'recvonly' });
+          }
+        } else {
           pc.addTransceiver('video', { direction: 'recvonly' });
-        }
-        if (!tracks.some((t) => t.kind === 'audio')) {
           pc.addTransceiver('audio', { direction: 'recvonly' });
         }
-      } else {
-        pc.addTransceiver('video', { direction: 'recvonly' });
-        pc.addTransceiver('audio', { direction: 'recvonly' });
       }
 
       pc.onicecandidate = (ev) => {
@@ -782,46 +888,148 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
         }
       };
 
+      pc.onicecandidateerror = (ev) => {
+        const iceErr = ev as RTCPeerConnectionIceErrorEvent;
+        logRtcDiagnostic(
+          'icecandidateerror',
+          peerId,
+          pc,
+          {
+            errorCode: iceErr.errorCode,
+            errorText: iceErr.errorText,
+            url: iceErr.url,
+          },
+          'warn'
+        );
+      };
+
       pc.ontrack = (ev) => {
         const track = ev.track;
         let peerStream = remoteStreamsMapRef.current.get(peerId);
+        let isNewStream = false;
         if (!peerStream) {
           peerStream = new MediaStream();
           remoteStreamsMapRef.current.set(peerId, peerStream);
+          isNewStream = true;
         }
-        if (!peerStream.getTracks().some((t) => t.id === track.id)) {
+        // Clean up any ended tracks of the same kind before adding the replacement track
+        peerStream
+          .getTracks()
+          .filter((t) => t.kind === track.kind && t.id !== track.id && t.readyState === 'ended')
+          .forEach((staleTrack) => peerStream!.removeTrack(staleTrack));
+
+        const addedTrack = !peerStream.getTracks().some((t) => t.id === track.id);
+        if (addedTrack) {
           peerStream.addTrack(track);
+          track.addEventListener('mute', () => {
+            logRtcDiagnostic('track:mute', peerId, pc, { kind: track.kind, trackId: track.id }, 'info');
+          });
+          track.addEventListener('unmute', () => {
+            logRtcDiagnostic('track:unmute', peerId, pc, { kind: track.kind, trackId: track.id }, 'info');
+          });
+          track.addEventListener('ended', () => {
+            logRtcDiagnostic('track:ended', peerId, pc, { kind: track.kind, trackId: track.id }, 'warn');
+          });
         }
-        const publishSnapshot = () => {
-          const current = remoteStreamsMapRef.current.get(peerId);
-          if (!current) return;
-          const snapshot = new MediaStream(current.getTracks());
-          setRemoteStreams((prev) => ({ ...prev, [peerId]: snapshot }));
-        };
-        publishSnapshot();
-        track.onunmute = publishSnapshot;
+        logRtcDiagnostic('track', peerId, pc, {
+          kind: track.kind,
+          trackId: track.id,
+          muted: track.muted,
+          addedTrack,
+        });
+        if (isNewStream || addedTrack) {
+          const stableStream = peerStream;
+          setRemoteStreams((prev) => ({ ...prev, [peerId]: stableStream }));
+        }
       };
 
       pc.onnegotiationneeded = async () => {
-        const polite = isPolitePeer(selfIdRef.current, peerId);
-        if (polite && !pc.currentRemoteDescription) {
+        const action = getRenegotiationAction({
+          signalingState: pc.signalingState,
+          makingOffer: record.makingOffer,
+          isPolite: isPolitePeer(selfIdRef.current, peerId),
+          hasRemoteDescription: Boolean(pc.currentRemoteDescription),
+        });
+        if (action === 'wait-for-remote') return;
+        if (action === 'defer') {
+          record.needsRenegotiation = true;
           return;
         }
         await sendOfferToPeer(peerId, record);
       };
 
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === 'failed') {
-          pc.restartIce();
+      const triggerIceRestartIfNeeded = (reason: string) => {
+        const nowMs = Date.now();
+        if (
+          !shouldAttemptIceRestart({
+            connectionState: pc.connectionState,
+            iceConnectionState: pc.iceConnectionState,
+            lastRestartAtMs: record.lastIceRestartAtMs,
+            nowMs,
+          })
+        ) {
+          return;
+        }
+        record.lastIceRestartAtMs = nowMs;
+        logRtcDiagnostic('ice-restart', peerId, pc, { reason }, 'warn');
+        pc.restartIce();
+      };
+
+      const handlePeerStateTransition = (
+        sourceEvent: 'iceconnectionstatechange' | 'connectionstatechange'
+      ) => {
+        const effectiveState = deriveEffectivePeerState(pc.connectionState, pc.iceConnectionState);
+        const isDegraded =
+          effectiveState === 'disconnected' ||
+          effectiveState === 'failed' ||
+          effectiveState === 'closed';
+
+        logRtcDiagnostic(sourceEvent, peerId, pc, undefined, isDegraded ? 'warn' : 'info');
+        setPeerConnectionStates((prev) => ({ ...prev, [peerId]: effectiveState }));
+
+        if (record.disconnectTimer) {
+          window.clearTimeout(record.disconnectTimer);
+          record.disconnectTimer = null;
+        }
+
+        if (effectiveState === 'connected') {
+          // Clear any cached WS relay snapshot so stale frames can never freeze over live video
+          setRemoteRelayFrames((prev) => {
+            if (!(peerId in prev)) return prev;
+            const next = { ...prev };
+            delete next[peerId];
+            return next;
+          });
+        } else if (effectiveState === 'failed') {
+          triggerIceRestartIfNeeded(`${sourceEvent}:failed`);
+        } else if (effectiveState === 'disconnected') {
+          record.disconnectTimer = window.setTimeout(() => {
+            const currentEffective = deriveEffectivePeerState(
+              pc.connectionState,
+              pc.iceConnectionState
+            );
+            if (currentEffective === 'disconnected' || currentEffective === 'failed') {
+              triggerIceRestartIfNeeded(`${sourceEvent}:disconnect-timeout`);
+            }
+          }, 3000);
         }
       };
 
+      pc.addEventListener('iceconnectionstatechange', () => {
+        handlePeerStateTransition('iceconnectionstatechange');
+      });
+
+      pc.addEventListener('connectionstatechange', () => {
+        handlePeerStateTransition('connectionstatechange');
+      });
+
       return record;
     },
-    [sendOfferToPeer, sendWs]
+    [logRtcDiagnostic, sendOfferToPeer, sendWs]
   );
 
   const ensurePeerRecordRef = useRef(ensurePeerRecord);
+  const attachLocalTracksToPeerRef = useRef(attachLocalTracksToPeer);
   const sendOfferToPeerRef = useRef(sendOfferToPeer);
   const refreshDirectoryRef = useRef(refreshDirectory);
   const closeAllPeersRef = useRef(closeAllPeers);
@@ -831,6 +1039,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const recordRecentRoomRef = useRef(recordRecentRoom);
 
   ensurePeerRecordRef.current = ensurePeerRecord;
+  attachLocalTracksToPeerRef.current = attachLocalTracksToPeer;
   sendOfferToPeerRef.current = sendOfferToPeer;
   refreshDirectoryRef.current = refreshDirectory;
   closeAllPeersRef.current = closeAllPeers;
@@ -1061,7 +1270,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
 
             for (const peer of state.participants) {
               if (peer.id !== msg.selfId && !isPolitePeer(msg.selfId, peer.id)) {
-                const rec = ensurePeerRecordRef.current(peer.id);
+                const rec = ensurePeerRecordRef.current(peer.id, { isOfferer: true });
                 if (rec.pc.signalingState === 'stable' && !rec.makingOffer && !rec.pc.localDescription) {
                   await sendOfferToPeerRef.current(peer.id, rec);
                 }
@@ -1075,7 +1284,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
                 : [...prev, incoming]
             );
             if (incoming.id !== selfIdRef.current && !isPolitePeer(selfIdRef.current, incoming.id)) {
-              const rec = ensurePeerRecordRef.current(incoming.id);
+              const rec = ensurePeerRecordRef.current(incoming.id, { isOfferer: true });
               if (rec.pc.signalingState === 'stable' && !rec.makingOffer && !rec.pc.localDescription) {
                 await sendOfferToPeerRef.current(incoming.id, rec);
               }
@@ -1095,6 +1304,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
             if (roleChanged && updated.id !== selfIdRef.current) {
               const stale = peersRef.current.get(updated.id);
               if (stale) {
+                if (stale.disconnectTimer) window.clearTimeout(stale.disconnectTimer);
                 stale.pc.close();
                 peersRef.current.delete(updated.id);
               }
@@ -1104,8 +1314,13 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
                 delete next[updated.id];
                 return next;
               });
+              setPeerConnectionStates((prev) => {
+                const next = { ...prev };
+                delete next[updated.id];
+                return next;
+              });
               if (!isPolitePeer(selfIdRef.current, updated.id)) {
-                const rec = ensurePeerRecordRef.current(updated.id);
+                const rec = ensurePeerRecordRef.current(updated.id, { isOfferer: true });
                 if (rec.pc.signalingState === 'stable' && !rec.makingOffer && !rec.pc.localDescription) {
                   await sendOfferToPeerRef.current(updated.id, rec);
                 }
@@ -1116,11 +1331,17 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
             setParticipants((prev) => prev.filter((p) => p.id !== leftId));
             const rec = peersRef.current.get(leftId);
             if (rec) {
+              if (rec.disconnectTimer) window.clearTimeout(rec.disconnectTimer);
               rec.pc.close();
               peersRef.current.delete(leftId);
             }
             remoteStreamsMapRef.current.delete(leftId);
             setRemoteStreams((prev) => {
+              const next = { ...prev };
+              delete next[leftId];
+              return next;
+            });
+            setPeerConnectionStates((prev) => {
               const next = { ...prev };
               delete next[leftId];
               return next;
@@ -1186,25 +1407,29 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
             window.setTimeout(() => setChatError(null), 3500);
           } else if (msg.type === 'webrtc:offer') {
             const fromId = msg.fromId;
-            const rec = ensurePeerRecordRef.current(fromId);
+            const rec = ensurePeerRecordRef.current(fromId, { isOfferer: false });
             const polite = isPolitePeer(selfIdRef.current, fromId);
             const offerCollision = rec.makingOffer || rec.pc.signalingState !== 'stable';
             rec.ignoreOffer = !polite && offerCollision;
             if (rec.ignoreOffer) return;
 
             await rec.pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
+            // Attach local tracks onto the offer's matched transceivers before creating the answer
+            attachLocalTracksToPeerRef.current(rec.pc, localStreamRef.current);
             while (rec.pendingCandidates.length > 0) {
               const cand = rec.pendingCandidates.shift()!;
               await rec.pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
             }
-            const answer = await rec.pc.createAnswer();
-            await rec.pc.setLocalDescription(answer);
+            await rec.pc.setLocalDescription();
             if (rec.pc.localDescription) {
               sendWsRef.current({
                 type: 'webrtc:answer',
                 targetId: fromId,
                 answer: rec.pc.localDescription.toJSON(),
               });
+            }
+            if (rec.needsRenegotiation && rec.pc.signalingState === 'stable') {
+              await sendOfferToPeerRef.current(fromId, rec);
             }
           } else if (msg.type === 'webrtc:answer') {
             const rec = peersRef.current.get(msg.fromId);
@@ -1214,10 +1439,13 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
                 const cand = rec.pendingCandidates.shift()!;
                 await rec.pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
               }
+              if (rec.needsRenegotiation && (rec.pc.signalingState as RTCSignalingState) === 'stable') {
+                await sendOfferToPeerRef.current(msg.fromId, rec);
+              }
             }
           } else if (msg.type === 'webrtc:ice-candidate') {
             const fromId = msg.fromId;
-            const rec = ensurePeerRecordRef.current(fromId);
+            const rec = ensurePeerRecordRef.current(fromId, { isOfferer: false });
             if (rec.ignoreOffer) return;
             if (rec.pc.remoteDescription) {
               await rec.pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(() => {});
@@ -1226,13 +1454,22 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
             }
           } else if (msg.type === 'media:frame') {
             if (msg.fromId && msg.frame.startsWith('data:image/')) {
-              setRemoteRelayFrames((prev) => ({ ...prev, [msg.fromId]: msg.frame }));
+              const peerPc = peersRef.current.get(msg.fromId)?.pc;
+              if (!isPeerRtcHealthy(peerPc?.connectionState, peerPc?.iceConnectionState)) {
+                setRemoteRelayFrames((prev) => ({ ...prev, [msg.fromId]: msg.frame }));
+              }
             }
           } else if (msg.type === 'media:audio') {
             playRelayedAudioChunkRef.current(msg.fromId, msg.pcm16, msg.sampleRate);
           }
-        } catch {
-          // ignore malformed signaling frames
+        } catch (err) {
+          console.warn('[ClipThat][WebRTC]', {
+            ts: new Date().toISOString(),
+            event: 'signaling-error',
+            roomId: roomIdRef.current,
+            selfId: selfIdRef.current,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       };
 
@@ -1273,13 +1510,18 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     if (!hasJoined || !connected || selfRole === 'viewer' || !localStream || (!videoEnabled && !screenSharing)) {
       return;
     }
-    const otherPeers = participants.filter((p) => p.id !== selfId);
-    if (otherPeers.length === 0) return;
 
+    // Mount a 1x1 near-transparent video element in the DOM so Chrome/Safari keep decoding frames
+    // instead of throttling an unattached offscreen <video> element.
     const offscreenVideo = document.createElement('video');
     offscreenVideo.muted = true;
     offscreenVideo.playsInline = true;
+    offscreenVideo.autoplay = true;
+    offscreenVideo.setAttribute('aria-hidden', 'true');
+    offscreenVideo.style.cssText =
+      'position:fixed;bottom:0;right:0;width:1px;height:1px;opacity:0.001;pointer-events:none;z-index:-1;';
     offscreenVideo.srcObject = localStream;
+    document.body.appendChild(offscreenVideo);
     offscreenVideo.play().catch(() => {});
 
     const canvas = document.createElement('canvas');
@@ -1293,11 +1535,18 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
         const ws = wsRef.current;
         if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 180_000) return;
 
-        const anyPeerNeedsRelay = otherPeers.some(
-          (p) => peersRef.current.get(p.id)?.pc.connectionState !== 'connected'
-        );
+        const otherPeers = participantsRef.current.filter((p) => p.id !== selfIdRef.current);
+        if (otherPeers.length === 0) return;
+
+        const anyPeerNeedsRelay = otherPeers.some((p) => {
+          const peerPc = peersRef.current.get(p.id)?.pc;
+          return !isPeerRtcHealthy(peerPc?.connectionState, peerPc?.iceConnectionState);
+        });
         if (!anyPeerNeedsRelay || !ctx) return;
 
+        if (offscreenVideo.paused) {
+          offscreenVideo.play().catch(() => {});
+        }
         if (offscreenVideo.readyState >= 2 && offscreenVideo.videoWidth > 0) {
           ctx.drawImage(offscreenVideo, 0, 0, canvas.width, canvas.height);
         } else if (usingSyntheticFeed && synthCanvasRef.current) {
@@ -1320,8 +1569,9 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
       if (timer) window.clearInterval(timer);
       offscreenVideo.pause();
       offscreenVideo.srcObject = null;
+      offscreenVideo.remove();
     };
-  }, [connected, hasJoined, localStream, participants, screenSharing, selfId, selfRole, usingSyntheticFeed, videoEnabled]);
+  }, [connected, hasJoined, localStream, screenSharing, selfRole, usingSyntheticFeed, videoEnabled]);
 
   // Automatic WebSocket PCM audio relay fallback whenever any peer's WebRTC P2P ICE is not connected
   useEffect(() => {
@@ -1336,8 +1586,6 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     ) {
       return;
     }
-    const otherPeers = participants.filter((p) => p.id !== selfId);
-    if (otherPeers.length === 0) return;
 
     const AudioCtx =
       window.AudioContext ||
@@ -1365,9 +1613,12 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
       processor.onaudioprocess = (event) => {
         const ws = wsRef.current;
         if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 120_000) return;
-        const anyPeerNeedsRelay = otherPeers.some(
-          (p) => peersRef.current.get(p.id)?.pc.connectionState !== 'connected'
-        );
+        const otherPeers = participantsRef.current.filter((p) => p.id !== selfIdRef.current);
+        if (otherPeers.length === 0) return;
+        const anyPeerNeedsRelay = otherPeers.some((p) => {
+          const peerPc = peersRef.current.get(p.id)?.pc;
+          return !isPeerRtcHealthy(peerPc?.connectionState, peerPc?.iceConnectionState);
+        });
         if (!anyPeerNeedsRelay) return;
 
         const channelData = event.inputBuffer.getChannelData(0);
@@ -1428,7 +1679,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
         captureCtx.close().catch(() => {});
       }
     };
-  }, [audioEnabled, connected, hasJoined, localStream, participants, selfId, selfRole]);
+  }, [audioEnabled, connected, hasJoined, localStream, selfRole]);
 
   const switchInputDevice = useCallback(
     async (audioId: string, videoId: string) => {
@@ -1627,6 +1878,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     recentRooms,
     remoteStreams,
     remoteRelayFrames,
+    peerConnectionStates,
     mutedPeerIds,
     audioBlocked,
     audioUnlockSeq,

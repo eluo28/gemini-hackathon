@@ -518,6 +518,17 @@ async function startServer() {
             { type: existingSameId ? 'participant:updated' : 'participant:joined', participant },
             participantId
           );
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'ws:join',
+              roomId: room.id,
+              participantId,
+              role,
+              roomSize: room.participants.size,
+              rejoined: Boolean(existingSameId),
+            })
+          );
           return;
         }
 
@@ -659,7 +670,18 @@ async function startServer() {
           }
           broadcastToRoom(currentRoom, { type: 'chat:deleted', messageId });
         } else if (msg.type === 'webrtc:offer') {
-          const targetPeer = currentRoom.participants.get(String(msg.targetId || ''));
+          const targetId = String(msg.targetId || '');
+          const targetPeer = currentRoom.participants.get(targetId);
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'ws:webrtc-offer',
+              roomId: currentRoom.id,
+              fromId: participantId,
+              targetId,
+              delivered: Boolean(targetPeer),
+            })
+          );
           if (targetPeer) {
             sendToSocket(targetPeer.ws, {
               type: 'webrtc:offer',
@@ -668,7 +690,18 @@ async function startServer() {
             });
           }
         } else if (msg.type === 'webrtc:answer') {
-          const targetPeer = currentRoom.participants.get(String(msg.targetId || ''));
+          const targetId = String(msg.targetId || '');
+          const targetPeer = currentRoom.participants.get(targetId);
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'ws:webrtc-answer',
+              roomId: currentRoom.id,
+              fromId: participantId,
+              targetId,
+              delivered: Boolean(targetPeer),
+            })
+          );
           if (targetPeer) {
             sendToSocket(targetPeer.ws, {
               type: 'webrtc:answer',
@@ -743,6 +776,15 @@ async function startServer() {
             type: 'participant:left',
             participantId,
           });
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'ws:leave',
+              roomId: currentRoom.id,
+              participantId,
+              remaining: currentRoom.participants.size,
+            })
+          );
           const remainingBroadcasters = Array.from(currentRoom.participants.values()).filter(
             (p) => p.info.role !== 'viewer'
           );

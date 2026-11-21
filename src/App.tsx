@@ -182,6 +182,7 @@ function StudioApp() {
           localStream={studio.localStream}
           remoteStreams={studio.remoteStreams}
           remoteRelayFrames={studio.remoteRelayFrames}
+          peerConnectionStates={studio.peerConnectionStates}
           audioEnabled={studio.audioEnabled}
           videoEnabled={studio.videoEnabled}
           screenSharing={studio.screenSharing}

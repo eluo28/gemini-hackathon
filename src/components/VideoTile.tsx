@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { Volume2, VolumeX } from 'lucide-react';
 import { getFallbackAnimalAvatar } from '../utils/streamUtils';
+import {
+  getVideoTrackSignature,
+  shouldShowRelayOverlay,
+  type PeerRtcState,
+} from '../utils/videoPlayback';
 import type { RoomParticipant } from '../utils/types';
 
 export interface VideoTileProps {
   participant: RoomParticipant;
   stream: MediaStream | null;
   relayFrame?: string;
+  peerConnectionState?: PeerRtcState;
   isSelf: boolean;
   isPeerMuted: boolean;
   audioUnlockSeq: number;
@@ -18,6 +24,7 @@ export function ParticipantVideoTile({
   participant,
   stream,
   relayFrame,
+  peerConnectionState,
   isSelf,
   isPeerMuted,
   audioUnlockSeq,
@@ -30,35 +37,79 @@ export function ParticipantVideoTile({
   const [hasLiveVideoFrame, setHasLiveVideoFrame] = useState(false);
 
   const isVideoActive = participant.videoEnabled || participant.screenSharing;
+  const videoTrackSig = getVideoTrackSignature(stream);
 
+  // Only reset hasLiveVideoFrame when video turns off or the underlying video track actually changes
   useEffect(() => {
-    setHasLiveVideoFrame(false);
-  }, [stream, isVideoActive]);
+    if (!stream || !isVideoActive || !videoTrackSig) {
+      setHasLiveVideoFrame(false);
+      return;
+    }
+    const el = videoRef.current;
+    if (el && el.readyState >= 2 && el.videoWidth > 0 && !el.paused) {
+      setHasLiveVideoFrame(true);
+    } else {
+      setHasLiveVideoFrame(false);
+    }
+  }, [isVideoActive, stream, videoTrackSig]);
 
-  // Video element (always muted; remote audio plays through the dedicated <audio> element below
-  // so turning a friend's camera off NEVER cuts off their microphone audio!)
+  // Attach MediaStream to <video> without needlessly resetting srcObject (which can freeze decoding).
+  // Remote audio plays through the dedicated <audio> element below so camera-off never cuts audio.
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
     if (stream && isVideoActive) {
-      el.srcObject = stream;
-      el.muted = true;
-      if (el.readyState >= 2 && el.videoWidth > 0) {
-        setHasLiveVideoFrame(true);
+      if (el.srcObject !== stream) {
+        el.srcObject = stream;
       }
-      el.play().catch(() => {});
+      el.muted = true;
+      const tryPlay = () => {
+        if (el.readyState >= 2 && el.videoWidth > 0) {
+          setHasLiveVideoFrame(true);
+        }
+        el.play().catch(() => {});
+      };
+      tryPlay();
+
+      const videoTracks = stream.getVideoTracks();
+      const handleTrackUnmute = () => {
+        tryPlay();
+      };
+      const handleTrackMute = () => {
+        // Keep checking; if WebRTC drops, peerConnectionState will trigger relay overlay
+      };
+      videoTracks.forEach((track) => {
+        track.addEventListener('unmute', handleTrackUnmute);
+        track.addEventListener('mute', handleTrackMute);
+      });
+      const handleAddTrack = () => {
+        tryPlay();
+      };
+      stream.addEventListener('addtrack', handleAddTrack);
+
+      return () => {
+        videoTracks.forEach((track) => {
+          track.removeEventListener('unmute', handleTrackUnmute);
+          track.removeEventListener('mute', handleTrackMute);
+        });
+        stream.removeEventListener('addtrack', handleAddTrack);
+      };
     } else {
-      el.srcObject = null;
+      if (el.srcObject !== null) {
+        el.srcObject = null;
+      }
       setHasLiveVideoFrame(false);
     }
-  }, [stream, isVideoActive]);
+  }, [stream, isVideoActive, videoTrackSig]);
 
   // Dedicated always-mounted remote audio playback element (independent of camera on/off)
   useEffect(() => {
     const audioEl = audioRef.current;
     if (!audioEl || isSelf) return;
     if (stream) {
-      audioEl.srcObject = stream;
+      if (audioEl.srcObject !== stream) {
+        audioEl.srcObject = stream;
+      }
       audioEl.muted = isPeerMuted;
       audioEl.volume = 1;
       if (!isPeerMuted) {
@@ -66,7 +117,7 @@ export function ParticipantVideoTile({
           onAudioBlocked();
         });
       }
-    } else {
+    } else if (audioEl.srcObject !== null) {
       audioEl.srcObject = null;
     }
   }, [stream, isSelf, isPeerMuted, audioUnlockSeq, onAudioBlocked]);
@@ -74,7 +125,20 @@ export function ParticipantVideoTile({
   const fallbackAvatar =
     participant.avatarUrl || getFallbackAnimalAvatar(participant.id).url;
 
-  const showRelayImage = !isSelf && isVideoActive && !hasLiveVideoFrame && Boolean(relayFrame);
+  const showRelayImage = shouldShowRelayOverlay({
+    isSelf,
+    isVideoActive,
+    hasLiveVideoFrame,
+    hasRelayFrame: Boolean(relayFrame),
+    peerConnectionState,
+  });
+
+  const markFrameLive = () => {
+    const el = videoRef.current;
+    if (el && el.videoWidth > 0 && el.readyState >= 2) {
+      setHasLiveVideoFrame(true);
+    }
+  };
 
   return (
     <div
@@ -86,23 +150,25 @@ export function ParticipantVideoTile({
         <audio ref={audioRef} autoPlay playsInline muted={isPeerMuted} className="hidden" />
       )}
 
+      {/* Keep <video> rendered (never display:none) so Chrome/Safari keep decoding WebRTC frames */}
       {stream && isVideoActive && (
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          onLoadedData={() => {
-            if (videoRef.current && videoRef.current.videoWidth > 0) {
-              setHasLiveVideoFrame(true);
+          onLoadedMetadata={markFrameLive}
+          onLoadedData={markFrameLive}
+          onCanPlay={markFrameLive}
+          onPlaying={markFrameLive}
+          onResize={markFrameLive}
+          onPause={() => {
+            const el = videoRef.current;
+            if (el && isVideoActive && el.srcObject) {
+              el.play().catch(() => {});
             }
           }}
-          onResize={() => {
-            if (videoRef.current && videoRef.current.videoWidth > 0) {
-              setHasLiveVideoFrame(true);
-            }
-          }}
-          className={showRelayImage ? 'hidden' : 'w-full h-full object-cover'}
+          className="w-full h-full object-cover"
         />
       )}
 
@@ -110,7 +176,7 @@ export function ParticipantVideoTile({
         <img
           src={relayFrame}
           alt={`${participant.name} live stream`}
-          className="w-full h-full object-cover"
+          className="absolute inset-0 w-full h-full object-cover"
         />
       ) : !stream || !isVideoActive ? (
         <div className="w-full h-full bg-gradient-to-br from-slate-50 via-white to-slate-100/90 flex items-center justify-center p-4 pb-12">
