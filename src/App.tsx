@@ -140,7 +140,9 @@ function StudioApp() {
 
   if (!studio.hasJoined) {
     return (
-      <><button className="ac-library-link" onClick={() => setShowMyClips(true)}>My Clips ({clipper.queue.length})</button><JoinStreamGate
+      <JoinStreamGate
+        onOpenMyClips={() => setShowMyClips(true)}
+        clipCount={clipper.queue.length}
         initialRoomId={studio.roomId}
         initialRole={studio.selfRole}
         avatar={studio.selfAvatar}
@@ -162,7 +164,7 @@ function StudioApp() {
             title || category ? { title, category } : undefined
           );
         }}
-      /></>
+      />
     );
   }
 
