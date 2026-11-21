@@ -47,7 +47,7 @@ export function productsFrom(document: Doc): GiftProduct[] {
     }];
   }));
 }
-export interface Recipient { profile: { id: string; displayName: string; giftingEnabled: boolean }; shippingAddress: null | { recipient: string; street: string; city: string; region: string; postalCode: string; country: string } }
+export interface Recipient { profile: { id: string; displayName: string; giftingEnabled: boolean }; shippingAddress: null | { recipient: string; lastName?: string; phone?: string; street: string; city: string; region: string; postalCode: string; country: string } }
 interface GiftFlow {
   roomId: string; recipient: Recipient; recipientDigest: string; shop: string; cart?: Doc; checkout?: Doc;
   uncertainWrite: boolean; review?: { id: string; fingerprint: string; instrumentKeys: string[] }; completionAttempted: boolean;
@@ -89,7 +89,7 @@ export function recipientMatches(checkout: Doc, recipient: Recipient): boolean {
       && normalize(destination.address_region) === normalize(address.region)
       && normalize(destination.postal_code) === normalize(address.postalCode)
       && normalize(destination.address_country) === normalize(address.country)
-      && normalize([destination.first_name, destination.last_name].filter(Boolean).join(' ')) === normalize(address.recipient);
+      && normalize([destination.first_name, destination.last_name].filter(Boolean).join(' ')) === normalize([address.recipient, address.lastName].filter(Boolean).join(' '));
   });
 }
 const fingerprint = (checkout: Doc) => digest({ line_items: checkout.line_items, totals: checkout.totals, currency: checkout.currency, payment: checkout.payment ? { ...checkout.payment, instruments: (checkout.payment.instruments || []).map((instrument: Doc) => { const { credential: _credential, ...identity } = instrument; return identity; }) } : undefined, fulfillment: checkout.fulfillment, messages: checkout.messages, links: checkout.links, status: checkout.status });
@@ -149,7 +149,7 @@ export function createGiftingService(options: {
           instruments: (checkout.payment?.instruments || []).map((instrument: Doc, index: number) => ({ key: f.review?.instrumentKeys[index] || '', label: String(instrument.display?.label || instrument.display?.name || instrument.display?.description || [instrument.display?.brand, instrument.display?.last_digits].filter(Boolean).join(' ') || `Payment method ${index + 1} (${instrument.type})`) })),
           delivery: (checkout.fulfillment?.methods || []).flatMap((method: Doc, mi: number) => (method.groups || []).map((group: Doc, gi: number) => ({ methodKey: String(mi), groupKey: String(gi), selected: group.selected_option_id || null, options: (group.options || []).map((option: Doc) => ({ key: option.id, label: String(option.title || option.display_text || option.name || option.id), amount: option.totals?.find((total: Doc) => total.type === 'total')?.amount ?? option.amount })) }))),
         } : null,
-        messages: [...(cart ? messages(cart) : []), ...(checkout ? messages(checkout) : [])],
+        messages: checkout ? messages(checkout) : cart ? messages(cart) : [],
       };
     },
     async connect(session: ViewerSession) {
@@ -224,7 +224,7 @@ export function createGiftingService(options: {
       const f = flow(session);
       if (f.checkout || f.uncertainWrite || !f.cart?.line_items?.length) throw new GiftError('Refresh your existing checkout or add a gift first.', 409);
       const address = f.recipient.shippingAddress!;
-      const destination = { id: `${f.recipient.profile.id}_delivery`, type: 'shipping_address', first_name: address.recipient, street_address: address.street, address_locality: address.city, address_region: address.region, postal_code: address.postalCode, address_country: address.country };
+      const destination = { id: `${f.recipient.profile.id}_delivery`, type: 'shipping_address', first_name: address.recipient, ...(address.lastName ? { last_name: address.lastName } : {}), ...(address.phone ? { phone_number: address.phone } : {}), street_address: address.street, address_locality: address.city, address_region: address.region, postal_code: address.postalCode, address_country: address.country };
       try {
         f.checkout = await call(session, 'create_checkout', { shop: f.shop, checkout: { cart_id: f.cart.id, line_items: [], fulfillment: { methods: [{ type: 'shipping', destinations: [destination], selected_destination_id: destination.id }] } } }, crypto.randomUUID());
         // Some merchants require assigning delivery after checkout line IDs exist.

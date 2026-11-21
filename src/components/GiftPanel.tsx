@@ -6,8 +6,14 @@ export function giftMoney(amount: number, currency: string) {
   catch { return `${amount} ${currency} (minor units)`; }
 }
 function Notices({ messages }: { messages: GiftMessage[] }) {
-  return <>{messages.map((message, i) => <div key={i} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-    <p>{message.content}</p>
+  // Compatibility with the running backend, which included the same checkout
+  // notices twice. Collapse only a repeated whole list, preserving its contents.
+  const midpoint = messages.length / 2;
+  const visible = messages.length > 0 && messages.length % 2 === 0
+    && JSON.stringify(messages.slice(0, midpoint)) === JSON.stringify(messages.slice(midpoint))
+    ? messages.slice(0, midpoint) : messages;
+  return <>{visible.map((message, i) => <div key={i} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+    <p>{message.content === 'An extension interaction is required to complete the checkout.' ? 'This store requires a step on its checkout page.' : message.content}</p>
     {message.links.map(link => <a key={link.href} href={link.href} target="_blank" rel="noreferrer" className="mr-3 underline">{link.label}</a>)}
     {message.images.map(image => <img key={image.url} src={image.url} alt={image.alt} className="mt-2 max-h-40" />)}
   </div>)}</>;

@@ -311,6 +311,7 @@ async function startServer() {
     res.setHeader('Cache-Control', 'no-store');
     const entry = getStreamer(req.params.roomId);
     const payload: RoomStreamerResponse = {
+      recipientDetailsSupported: true,
       streamer: entry?.profile || null,
       canEdit: !entry || entry.owner === profileOwner(req),
     };

@@ -147,11 +147,12 @@ export function LiveStage({
   const [showGifts, setShowGifts] = useState(false);
   const [streamer, setStreamer] = useState<StreamerProfile | null>(null);
 
+  const [recipientDetailsSupported, setRecipientDetailsSupported] = useState(false);
   const [canEditProfile, setCanEditProfile] = useState(false);
   const [profileFormOpen, setProfileFormOpen] = useState(false);
   const [profileError, setProfileError] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
-  const emptyAddress = { recipient: '', street: '', city: '', region: '', postalCode: '', country: '' };
+  const emptyAddress = { recipient: '', lastName: '', phone: '', street: '', city: '', region: '', postalCode: '', country: '' };
   const [profileDraft, setProfileDraft] = useState({ displayName: '', handle: '', bio: '', giftingEnabled: false, shippingAddress: emptyAddress });
 
   const openProfileForm = async () => {
@@ -162,7 +163,7 @@ export function LiveStage({
         const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/streamer/settings`);
         if (!response.ok) throw new Error('Could not load your profile settings.');
         const data = await response.json();
-        setProfileDraft(draft => ({ ...draft, shippingAddress: data.shippingAddress || { ...emptyAddress } }));
+        setProfileDraft(draft => ({ ...draft, shippingAddress: { ...emptyAddress, ...data.shippingAddress } }));
       } catch {
         setProfileError('Could not load your profile settings. Try again.');
         return;
@@ -203,7 +204,7 @@ export function LiveStage({
       .then(async (response) => {
         if (!response.ok) throw new Error('Could not load streamer');
         const data: RoomStreamerResponse = await response.json();
-        if (!controller.signal.aborted) { setStreamer(data.streamer); setCanEditProfile(data.canEdit); }
+        if (!controller.signal.aborted) { setStreamer(data.streamer); setCanEditProfile(data.canEdit); setRecipientDetailsSupported(data.recipientDetailsSupported === true); }
       })
       .catch(() => {
         // The stage remains usable if creator metadata cannot be loaded.
@@ -385,7 +386,7 @@ export function LiveStage({
             <legend className="text-sm font-semibold">Gift delivery address (optional)</legend>
             <p className="text-xs text-slate-500">Stored on the server for gift delivery. Merchants need this address to fulfill gifts.</p>
             <div className="grid gap-3 sm:grid-cols-2">
-              {([['recipient', 'Recipient name'], ['street', 'Street address'], ['city', 'City'], ['region', 'State / region'], ['postalCode', 'Postal code'], ['country', 'Country code (e.g. US)']] as const).map(([key, label]) => (
+              {([['recipient', recipientDetailsSupported ? 'Recipient first name' : 'Recipient name'], ...(recipientDetailsSupported ? [['lastName', 'Recipient last name'], ['phone', 'Delivery phone (with country code)']] as const : []), ['street', 'Street address'], ['city', 'City'], ['region', 'State / region'], ['postalCode', 'Postal code'], ['country', 'Country code (e.g. US)']] as const).map(([key, label]) => (
                 <label key={key} className="text-sm">{label}<input maxLength={key === 'country' ? 2 : 200} value={profileDraft.shippingAddress[key]} onChange={e => setProfileDraft({ ...profileDraft, shippingAddress: { ...profileDraft.shippingAddress, [key]: key === 'country' ? e.target.value.toUpperCase() : e.target.value } })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
               ))}
             </div>

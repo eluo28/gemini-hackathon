@@ -10,7 +10,7 @@ import { createGiftingRouter } from './giftingRoutes';
 import { createShopOAuth } from './shopOAuth';
 import { createShopMcpClient, type ShopMcpClient } from './shopMcp';
 
-const recipient: Recipient = { profile: { id: 'creator-test', displayName: 'Test Creator', giftingEnabled: true }, shippingAddress: { recipient: 'Test Recipient', street: '123 Test Street', city: 'Test City', region: 'CA', postalCode: '90001', country: 'US' } };
+const recipient: Recipient = { profile: { id: 'creator-test', displayName: 'Test Creator', giftingEnabled: true }, shippingAddress: { recipient: 'Test Recipient', lastName: 'Tester', phone: '+12025550123', street: '123 Test Street', city: 'Test City', region: 'CA', postalCode: '90001', country: 'US' } };
 function fixture() {
   const calls: { tool: string; args: Doc; options: unknown }[] = [];
   const marked = new Set<string>(); const alerts: unknown[] = [];
@@ -32,7 +32,7 @@ function fixture() {
     if (tool === 'get_cart') return structuredClone(cart);
     if (tool === 'update_cart') { cart = a.cart; return structuredClone(cart); }
     if (tool === 'create_checkout') {
-      checkout = { id: 'checkout-secret', status: 'ready_for_complete', line_items: structuredClone(cart.line_items), currency: 'USD', totals: [{ type: 'total', display_text: 'Total', amount: 2500 }], fulfillment: structuredClone(a.checkout.fulfillment), payment: { instruments: [instrument] }, links: [{ type: 'terms', url: 'https://merchant.example/terms' }], messages: [], continue_url: 'https://merchant.example/checkouts/private-key' };
+      checkout = { id: 'checkout-secret', status: 'ready_for_complete', line_items: structuredClone(cart.line_items), currency: 'USD', totals: [{ type: 'total', display_text: 'Total', amount: 2500 }], fulfillment: structuredClone(a.checkout.fulfillment), payment: { instruments: [instrument] }, links: [{ type: 'terms', url: 'https://merchant.example/terms' }], messages: [{ content: 'Delivery notice', severity: 'warning' }], continue_url: 'https://merchant.example/checkouts/private-key' };
       checkout.fulfillment.methods[0].line_item_ids = ['line1'];
       if (dropRecipient) checkout.fulfillment.methods[0].destinations[0].street_address = 'Wrong Destination';
       return structuredClone(checkout);
@@ -62,10 +62,13 @@ test('gift flow preserves cart state, uses server recipient, projects secrets ou
   for (const key of ['next', 'signals', 'attribution']) assert.equal(key in update, false);
   const view = await f.service.checkout(f.session);
   assert.equal(view.checkout!.recipientVerified, true);
+  assert.equal(view.messages.length, 1);
   const serialized = JSON.stringify(view);
   for (const secret of ['123 Test Street', 'private-test-token', 'private-test-credential', 'checkout-secret']) assert.equal(serialized.includes(secret), false);
   const request = f.calls.find(call => call.tool === 'create_checkout')!;
   assert.equal(request.args.checkout.fulfillment.methods[0].destinations[0].street_address, '123 Test Street');
+  assert.equal(request.args.checkout.fulfillment.methods[0].destinations[0].last_name, 'Tester');
+  assert.equal(request.args.checkout.fulfillment.methods[0].destinations[0].phone_number, '+12025550123');
   const result = await f.service.complete(f.session, view.checkout!.reviewId!, view.checkout!.instruments[0].key);
   assert.equal(result.checkout!.giftConfirmed, true);
   assert.equal(f.alerts.length, 1);

@@ -133,6 +133,7 @@ export interface StreamerProfile {
 }
 
 export interface RoomStreamerResponse {
+  recipientDetailsSupported?: boolean;
   streamer: StreamerProfile | null;
   canEdit: boolean;
 }
