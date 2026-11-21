@@ -41,14 +41,14 @@ export function saveStreamer(roomId: string, owner: string, input: unknown): Str
       shippingAddress = address;
     }
   }
+  if (value.giftingEnabled === true && !shippingAddress) throw new Error('Complete the delivery address before enabling gifts.');
   const existing = getStreamer(roomId);
   const profile: StreamerProfile = {
     id: existing?.profile.id || `creator_${crypto.randomUUID()}`,
     roomId, displayName, handle: `@${handle}`, bio: text(value.bio, 500),
     initials: displayName.split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase(),
-    giftingEnabled: false,
+    giftingEnabled: value.giftingEnabled === true && shippingAddress !== null,
     hasShippingAddress: shippingAddress !== null,
-    wishlist: existing?.profile.wishlist || [],
   };
   const entry = { owner, profile, shippingAddress };
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });

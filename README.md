@@ -117,8 +117,9 @@ settings endpoint requires the creator ownership cookie. This prototype uses
 first-claim, browser-cookie ownership, not verified creator accounts; add actual
 creator authentication before a public launch or real gifting.
 
-Gifting remains disabled until Shop MCP recipient checkout is implemented and
-verified. Saving an address does not activate purchases.
+Creators can opt into product gifting in the profile form after entering a
+delivery address. Delivery details may be visible in merchant checkout and order
+records; the form asks for this consent before enabling gifts.
 
 ## Shop MCP catalog infrastructure
 
@@ -142,9 +143,8 @@ or rehost merchant images. Fetch current data when needed and display source
 images directly. The transport has a 12-second timeout, never automatically
 retries, and does not follow redirects or accept a caller-selected endpoint.
 
-This is catalog infrastructure only. Buyer OAuth, session-owned carts, purchase
-confirmation and completion, and verified creator-recipient shipping remain to
-be implemented. There is no payment endpoint in this change.
+The catalog endpoints are anonymous. The viewer gifting flow described below
+adds separate buyer sessions, OAuth, carts, checkout review and payment completion.
 
 ## Gemini item detection
 
@@ -358,3 +358,68 @@ fingerprints. Run `npm run eval:review` to label desired start/peak/end timestam
 Use `npm run eval:run -- --all` for the full dataset. See [evals/README.md](evals/README.md)
 for metrics, held-out splits, reference review, and run comparison. The imported
 Wimbledon suggestion starts as a draft; quality metrics require reviewed references.
+
+## Viewer product gifting (local branch)
+
+No wishlist is needed. A creator enables gifts with a saved delivery address;
+viewers click **Gift to [creator]**, search products, choose size/color, add items
+to a single-merchant cart, connect Shop, and review the full merchant checkout.
+The viewer selects an offered payment method and explicitly confirms the store,
+items, quantities, current total and recipient before payment is submitted.
+
+Product discovery, cart operations, delivery options, checkout and eligible
+payment completion use Shop MCP from the backend. Shop sign-in opens a Shop page.
+If checkout requires a hosted step, **Finish required step on Shop** opens the
+returned checkout URL; refresh its status in the app afterwards. In-app payment
+is blocked once hosted checkout is opened, to avoid parallel submissions.
+
+The streamer address is read from server-owned creator settings, not supplied by
+the viewer. In-app completion requires checkout to echo the selected streamer
+address and cover all line items with shipping. If a merchant rejects or omits
+that destination, payment remains disabled. Only a completed checkout with an
+order and verified gift recipient generates a room-wide gift alert. Merchant
+support for a viewer-funded third-party recipient still requires a real Shop
+checkout test; local fixtures do not establish that support.
+
+### Test without a charge
+
+Run `npm run dev:gifting-demo`, then open `http://localhost:3031`.
+This explicit local-only mode simulates Shop sign-in, products, carts and payment;
+it makes no outbound Shop calls for the gifting panel. A prominent **LOCAL DEMO**
+banner and **Place simulated gift order** button distinguish it from real checkout.
+Production startup rejects this mode.
+
+1. Join as a host and use **Set up creator profile** (or **Edit profile**).
+2. Enter a test delivery address and check **Enable product gifts**; save.
+3. Open a second tab as a viewer in the same room.
+4. Click **Gift to [creator]**, **Connect demo buyer**, and search for a mug.
+5. Select its color, add it to cart, adjust quantity, and review checkout.
+6. Select the demo card, confirm the review, and place the simulated order.
+7. Check the confirmed order and the room-wide demo gift alert.
+
+Demo profiles are isolated in ignored `.data/gifting-demo`; there is no seeded
+creator, so users enter their own setup through the form. These demo orders are
+not Shopify test orders and prove no live payment or fulfillment behavior.
+
+### Real Shop mode
+
+Run the normal `npm run dev` (without `GIFTING_DEMO_MODE`) to call real Shop MCP.
+No Gemini key is needed for manual gift search. The prototype uses Shop's public
+OAuth device client, so sign-in needs no client secret. For a distributed app,
+configure a registered `SHOP_OAUTH_CLIENT_ID` (and secret when required) enabled
+for `personal_agent` and the `https://mcp.shop.com` resource.
+
+Buyer tokens and keyed cart/checkout resources stay server-side. Browser cookies
+are HttpOnly/SameSite and Secure in production. Each browser session has one gift
+cart, bound to one creator and merchant. Full-document updates preserve unknown
+merchant fields. Changed totals/items/payment identity require another review.
+Payment completion is never retried: a durable file of hashed checkout identities
+records attempts before submission, while uncertain outcomes are reconciled only
+with reads. No raw card credentials are saved or returned to the browser.
+
+This remains a single-process hackathon prototype. Creator ownership uses the
+existing first-claim browser cookie. Buyer sessions are in memory and expire after
+24 hours; restart loses session/cart access, and the UI instructs users to check
+any submitted order before starting another purchase. Production use needs real
+creator authentication and a shared secure session/transaction store. Do not log
+Shop tokens, checkout IDs/URLs, payment instruments or recipient addresses.

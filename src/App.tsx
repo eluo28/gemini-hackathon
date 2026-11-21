@@ -169,6 +169,7 @@ function StudioApp() {
           streamStartedAt={studio.streamStartedAt}
           isAutoRecording={clipper.recording}
           lastClipMarker={studio.lastClipMarker}
+          lastGift={studio.lastGift}
           streamEndedNotice={studio.streamEndedNotice}
           audioBlocked={studio.audioBlocked}
           audioUnlockSeq={studio.audioUnlockSeq}

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 const ENDPOINT = 'https://mcp.shop.com/';
 const PROTOCOL_VERSION = '2026-07-28';
 export type CatalogTool = 'search_catalog' | 'lookup_catalog' | 'get_product';
+export type ShopTool = CatalogTool | 'get_account' | 'create_cart' | 'get_cart' | 'update_cart' | 'create_checkout' | 'get_checkout' | 'update_checkout' | 'complete_checkout';
 export type ShopDocument = Record<string, unknown>;
 
 export class ShopMcpError extends Error {
@@ -14,7 +15,7 @@ export class ShopMcpError extends Error {
 /** Fixed-destination, server-only MCP transport. Never retries a request. */
 export function createShopMcpClient(fetcher: typeof fetch = fetch, timeoutMs = 12_000) {
   return {
-    async call(tool: CatalogTool, args: ShopDocument): Promise<ShopDocument> {
+    async call(tool: ShopTool, args: ShopDocument, options: { accessToken?: string; idempotencyKey?: string } = {}): Promise<ShopDocument> {
       const requestId = crypto.randomUUID();
       let response: Response;
       try {
@@ -28,11 +29,12 @@ export function createShopMcpClient(fetcher: typeof fetch = fetch, timeoutMs = 1
             'MCP-Protocol-Version': PROTOCOL_VERSION,
             'Mcp-Method': 'tools/call',
             'Mcp-Name': tool,
+            ...(options.accessToken ? { Authorization: `Bearer ${options.accessToken}` } : {}),
           },
           body: JSON.stringify({
             jsonrpc: '2.0', id: requestId, method: 'tools/call',
             params: {
-              name: tool, arguments: args,
+              name: tool, arguments: options.idempotencyKey ? { ...args, meta: { 'idempotency-key': options.idempotencyKey } } : args,
               _meta: {
                 'io.modelcontextprotocol/protocolVersion': PROTOCOL_VERSION,
                 'io.modelcontextprotocol/clientInfo': { name: 'clipthat', version: '1.0.0' },

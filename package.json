@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "dev:telemetry": "CLIP_TELEMETRY=1 tsx server.ts",
+    "dev:gifting-demo": "GIFTING_DEMO_MODE=true PORT=3031 PROFILE_DATA_DIR=.data/gifting-demo tsx server.ts",
     "start": "tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
