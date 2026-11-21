@@ -1,10 +1,6 @@
 import type { StreamerProfile } from '../shared/protocol';
-import { StreamShopChat } from './StreamShopChat';
-import type { GiftProduct } from '../shared/gifting';
-import { lazy, Suspense } from 'react';
 import type { GiftAlert } from '../shared/gifting';
-const GiftPanel = lazy(() => import('./GiftPanel').then(module => ({ default: module.GiftPanel })));
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import {
   Mic,
   MicOff,
@@ -38,7 +34,11 @@ import { RoomSwitcherDrawer } from './RoomSwitcherDrawer';
 import { ParticipantVideoTile } from './VideoTile';
 import type { PeerRtcState } from '../utils/videoPlayback';
 
+export interface StreamCaptureHandle { capture: (sourceId: string) => HTMLCanvasElement }
+
 interface LiveStageProps {
+  captureRef?: Ref<StreamCaptureHandle>;
+  onProfileChange?: (profile: StreamerProfile | null) => void;
   roomId: string;
   roomTitle: string;
   roomCategory: StreamCategory;
@@ -97,6 +97,8 @@ interface LiveStageProps {
 }
 
 export function LiveStage({
+  captureRef,
+  onProfileChange,
   roomId,
   roomTitle,
   roomCategory,
@@ -150,14 +152,6 @@ export function LiveStage({
   onTriggerClipMark,
 }: LiveStageProps) {
   const stageGridRef = useRef<HTMLDivElement>(null);
-  const [giftProducts, setGiftProducts] = useState<GiftProduct[]>([]);
-  const [streamer, setStreamer] = useState<StreamerProfile | null>(null);
-
-  useEffect(() => {
-    setGiftProducts([]);
-    setStreamer(null);
-  }, [roomId]);
-
   const [editingMeta, setEditingMeta] = useState(false);
   const [showDevices, setShowDevices] = useState(false);
   const [titleDraft, setTitleDraft] = useState(roomTitle);
@@ -211,6 +205,7 @@ export function LiveStage({
     return canvas;
   }
 
+  useImperativeHandle(captureRef, () => ({ capture: captureStreamFrame }));
   const { broadcasters, viewers } = partitionParticipants(participants);
   const hostParticipant =
     broadcasters.find((p) => p.role === 'host') || broadcasters[0] || undefined;
@@ -483,14 +478,6 @@ export function LiveStage({
           </div>
         </div>
 
-        <Suspense fallback={<p className="text-sm text-slate-500">Opening shopping chat…</p>}>
-          <GiftPanel key={roomId} roomId={roomId} initialProducts={giftProducts} recipient={streamer?.displayName || 'the streamer'}
-            chat={<StreamShopChat embedded isLive={isLive}
-              sources={broadcasters.filter(person => person.videoEnabled || person.screenSharing).map(person => ({ id: person.id, name: person.name }))}
-              capture={captureStreamFrame} canGift={Boolean(streamer?.giftingEnabled)}
-              onGift={product => setGiftProducts([product])} />} />
-        </Suspense>
-
         {/* Sleek Broadcast Control Dock */}
         {selfRole !== 'viewer' ? (
           <div
@@ -664,7 +651,7 @@ export function LiveStage({
 
         {/* Creator Profile Bio / Setup cleanly positioned below the video stage & dock */}
         <CreatorProfileSection
-          onProfileChange={setStreamer}
+          onProfileChange={onProfileChange}
           roomId={roomId}
           selfName={selfName}
           selfRole={selfRole}

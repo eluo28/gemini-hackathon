@@ -1,10 +1,12 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createShopMcpClient, type ShopMcpClient, type ShopTool } from './shopMcp';
+import { createShopMcpClient, ShopMcpError, type ShopMcpClient, type ShopTool } from './shopMcp';
 import { createShopOAuth, type ShopOAuth } from './shopOAuth';
 import { getStreamer } from './streamerProfiles';
-import type { GiftAlert, GiftMessage, GiftProduct, GiftView } from '../shared/gifting';
+import type { GiftAlert, GiftMessage, GiftProduct, GiftView, PurchaseMode } from '../shared/gifting';
+
+const CHECKOUT_CONTACT_EMAIL = 'allenlu378@gmail.com';
 
 // Merchant documents are extensible UCP objects. Keep originals server-side and
 // project explicit public views instead of passing credentials/addresses to UI.
@@ -49,6 +51,7 @@ export function productsFrom(document: Doc): GiftProduct[] {
 }
 export interface Recipient { profile: { id: string; displayName: string; giftingEnabled: boolean }; shippingAddress: null | { recipient: string; lastName?: string; phone?: string; street: string; city: string; region: string; postalCode: string; country: string } }
 interface GiftFlow {
+  mode?: PurchaseMode; buyerDestination?: Doc;
   roomId: string; recipient: Recipient; recipientDigest: string; shop: string; cart?: Doc; checkout?: Doc;
   uncertainWrite: boolean; review?: { id: string; fingerprint: string; instrumentKeys: string[] }; completionAttempted: boolean;
   handoffOpened?: boolean; verifiedBeforePayment?: boolean; announced?: boolean;
@@ -58,6 +61,8 @@ export interface ViewerSession {
   token?: string; tokenExpiresAt?: number;
   connection?: { deviceCode: string; url: string; code: string; interval: number; expiresAt: number; nextPoll: number };
   flow?: GiftFlow;
+  notice?: string;
+  retiredCheckouts?: { shop: string; checkoutId: string; status: string; userDeclined: true }[];
 }
 export class CompletionLedger {
   private attempts: Set<string>;
@@ -109,6 +114,7 @@ export function createGiftingService(options: {
   }
   function flow(session: ViewerSession) {
     if (!session.flow) throw new GiftError('Your gift cart is empty.', 409);
+    if (session.flow.mode === 'self') return session.flow;
     const current = recipient(session.flow.roomId);
     if (digest(current.shippingAddress) !== session.flow.recipientDigest || current.profile.id !== session.flow.recipient.profile.id) throw new GiftError('The streamer changed their delivery details. Clear this cart and choose your gift again.', 409);
     return session.flow;
@@ -120,7 +126,10 @@ export function createGiftingService(options: {
   }
   async function call(session: ViewerSession, tool: ShopTool, args: Doc, key?: string): Promise<Doc> {
     try {
-      const result = await mcp.call(tool, args, { accessToken: token(session), idempotencyKey: key });
+      // Basket operations work without Shop identity. Keep the server-owned
+      // basket on that proven path; link the buyer only for account/checkout.
+      const needsBuyer = tool === 'get_account' || tool.endsWith('_checkout');
+      const result = await mcp.call(tool, args, { accessToken: needsBuyer ? token(session) : undefined, idempotencyKey: key });
       if (tool !== 'get_account' && !['search_catalog', 'lookup_catalog', 'get_product'].includes(tool) && (typeof result.id !== 'string' || !result.id)) throw new GiftError('Shop returned an incomplete cart or checkout. Refresh its status.', 502);
       return result;
     }
@@ -135,7 +144,7 @@ export function createGiftingService(options: {
   }
   function observe(f: GiftFlow) {
     const c = f.checkout;
-    if (c?.status === 'completed' && typeof c.order?.id === 'string' && c.order.id && (c.fulfillment ? recipientMatches(c, f.recipient) : f.verifiedBeforePayment) && !f.announced) {
+    if (f.mode !== 'self' && c?.status === 'completed' && typeof c.order?.id === 'string' && c.order.id && (c.fulfillment ? recipientMatches(c, f.recipient) : f.verifiedBeforePayment) && !f.announced) {
       f.announced = true;
       options.confirmed?.({ simulated: Boolean(options.simulated), id: crypto.randomUUID(), roomId: f.roomId, recipient: f.recipient.profile.displayName, createdAt: Date.now() });
     }
@@ -143,8 +152,8 @@ export function createGiftingService(options: {
   const service = {
     view(session: ViewerSession): GiftView {
       const f = session.flow, checkout = f?.checkout, cart = checkout || f?.cart;
-      return { simulated: Boolean(options.simulated), connected: Boolean(token(session)), recipient: f?.recipient.profile.displayName || '', uncertainWrite: Boolean(f?.uncertainWrite),
-        cart: cart ? { shop: f!.shop, currency: cart.currency, totals: moneyTotals(cart), continueUrl: secureUrl(cart.continue_url), lines: (cart.line_items || []).map((line: Doc) => ({ id: line.id, title: String(line.item?.title || line.item?.id || 'Gift'), quantity: line.quantity, options: (line.item?.options || []).map((v: Doc) => `${v.name}: ${v.label}`).join(', '), image: secureUrl(line.item?.image?.url || line.item?.image || line.item?.media?.[0]?.url) })) } : null,
+      return { notice: session.notice, mode: f?.mode || 'gift', simulated: Boolean(options.simulated), connected: Boolean(token(session)), recipient: f?.recipient.profile.displayName || '', uncertainWrite: Boolean(f?.uncertainWrite),
+        cart: cart ? { shop: f!.shop, currency: cart.currency, totals: moneyTotals(cart), continueUrl: secureUrl(cart.continue_url), lines: (cart.line_items || []).map((line: Doc) => ({ id: line.id, title: String(line.item?.title || line.item?.id || 'Gift'), quantity: line.quantity, options: (line.item?.options || []).map((v: Doc) => `${v.name}: ${v.label}`).join(', '), image: secureUrl(line.item?.image_url || line.item?.image?.url || line.item?.image || line.item?.media?.[0]?.url) })) } : null,
         checkout: checkout && f ? { status: checkout.status, handoffOpened: Boolean(f.handoffOpened), recipientVerified: recipientMatches(checkout, f.recipient), currency: checkout.currency, totals: moneyTotals(checkout), continueUrl: secureUrl(checkout.continue_url), links: links(checkout.links), completionAttempted: f.completionAttempted, orderConfirmed: checkout.status === 'completed' && typeof checkout.order?.id === 'string' && Boolean(checkout.order.id), giftConfirmed: Boolean(f.announced), reviewId: f.review?.id,
           instruments: (checkout.payment?.instruments || []).map((instrument: Doc, index: number) => ({ key: f.review?.instrumentKeys[index] || '', label: String(instrument.display?.label || instrument.display?.name || instrument.display?.description || [instrument.display?.brand, instrument.display?.last_digits].filter(Boolean).join(' ') || `Payment method ${index + 1} (${instrument.type})`) })),
           delivery: (checkout.fulfillment?.methods || []).flatMap((method: Doc, mi: number) => (method.groups || []).map((group: Doc, gi: number) => ({ methodKey: String(mi), groupKey: String(gi), selected: group.selected_option_id || null, options: (group.options || []).map((option: Doc) => ({ key: option.id, label: String(option.title || option.display_text || option.name || option.id), amount: option.totals?.find((total: Doc) => total.type === 'total')?.amount ?? option.amount })) }))),
@@ -178,63 +187,94 @@ export function createGiftingService(options: {
       const document = await call(session, 'search_catalog', { catalog: { query, context: { address_country: r.shippingAddress!.country }, pagination: { limit: 6 } } });
       return { products: productsFrom(document), messages: messagesFrom(document) };
     },
-    async product(session: ViewerSession, roomId: string, productId: string, selected: {name: string; label: string}[]) {
-      const r = recipient(roomId);
-      const document = await call(session, 'get_product', { catalog: { id: productId, selected, context: { address_country: r.shippingAddress!.country } } });
+    async product(session: ViewerSession, roomId: string, productId: string, selected: {name: string; label: string}[], mode: PurchaseMode = 'gift') {
+      const r = mode === 'gift' ? recipient(roomId) : null;
+      const document = await call(session, 'get_product', { catalog: { id: productId, selected, ...(r ? { context: { address_country: r.shippingAddress!.country } } : {}) } });
       return { products: productsFrom(document), messages: messagesFrom(document) };
     },
-    async add(session: ViewerSession, roomId: string, productId: string, variantId: string, selected: {name: string; label: string}[]) {
-      const r = recipient(roomId);
+    async add(session: ViewerSession, roomId: string, productId: string, variantId: string, selected: {name: string; label: string}[], mode: PurchaseMode = 'gift') {
+      const r = mode === 'gift' ? recipient(roomId) : null;
+      if (session.flow && (session.flow.mode || 'gift') !== mode) throw new GiftError('Finish or clear your current cart before switching between a streamer gift and a purchase for yourself.', 409);
       if (session.flow && session.flow.roomId !== roomId) throw new GiftError('Clear your current gift cart before gifting another streamer.', 409);
       if (session.flow?.checkout || session.flow?.uncertainWrite) throw new GiftError('Finish or resolve the current checkout before adding another gift.', 409);
-      const result = await service.product(session, roomId, productId, selected);
+      // Catalog product IDs can resolve to another offer with the same options.
+      // Revalidate the exact variant the viewer selected.
+      const result = await service.product(session, roomId, variantId, selected, mode);
       const product = result.products.find(p => p.variantId === variantId);
       if (!product?.available || selected.some(v => !product.selected.some(option => option.name === v.name && option.label === v.label))) throw new GiftError('That exact product option is unavailable. Choose an available size/color.', 409);
-      if (!session.flow) session.flow = { roomId, recipient: structuredClone(r), recipientDigest: digest(r.shippingAddress), shop: product.shop, uncertainWrite: false, completionAttempted: false };
+      if (!session.flow) session.flow = { mode, roomId, recipient: r ? structuredClone(r) : { profile: { id: 'buyer', displayName: 'You', giftingEnabled: false }, shippingAddress: null }, recipientDigest: digest(r?.shippingAddress ?? null), shop: product.shop, uncertainWrite: false, completionAttempted: false };
       const f = flow(session);
       if (f.shop !== product.shop) throw new GiftError('Each gift cart belongs to one store. Finish or clear this cart before choosing another store.', 409);
+      let previousQuantity = 0;
       try {
         if (!f.cart) {
-          f.cart = await call(session, 'create_cart', { shop: f.shop, cart: { line_items: [{ item: { id: product.variantId }, quantity: 1 }], context: { address_country: r.shippingAddress!.country } } }, crypto.randomUUID());
+          f.cart = await call(session, 'create_cart', { shop: f.shop, cart: { line_items: [{ item: { id: product.variantId }, quantity: 1 }], ...(r ? { context: { address_country: r.shippingAddress!.country } } : {}) } }, crypto.randomUUID());
         } else {
           const current = await call(session, 'get_cart', { shop: f.shop, id: f.cart.id });
           const update = cloneForUpdate(current);
           const line = update.line_items?.find((v: Doc) => v.item?.id === product.variantId);
+          previousQuantity = line?.quantity || 0;
           if (line && line.quantity >= 20) throw new GiftError('Maximum gift quantity is 20.');
           if (line) line.quantity++; else update.line_items.push({ item: { id: product.variantId }, quantity: 1 });
           f.cart = await call(session, 'update_cart', { shop: f.shop, id: current.id, cart: update }, crypto.randomUUID());
         }
+        // A successful HTTP/tool response alone does not confirm an item was
+        // added. Read the authoritative cart before publishing the badge.
+        f.cart = await call(session, 'get_cart', { shop: f.shop, id: f.cart!.id });
       } catch (error) { f.uncertainWrite = true; throw error; }
+      const addedLine = f.cart!.line_items?.find((line: Doc) => line.item?.id === product.variantId);
+      if (!addedLine || !Number.isInteger(addedLine.quantity) || addedLine.quantity <= previousQuantity) {
+        throw new GiftError('Shop did not confirm that this item was added. Check the merchant notices in your cart before choosing another item.', 409);
+      }
+      delete session.notice;
       return service.view(session);
     },
     async quantity(session: ViewerSession, lineId: string, quantity: number) {
       const f = flow(session);
-      if (!f.cart || f.checkout || f.uncertainWrite) throw new GiftError('This cart cannot be changed right now.', 409);
+      if (!f.cart || f.completionAttempted || f.handoffOpened || f.uncertainWrite || ['completed', 'complete_in_progress'].includes(f.checkout?.status)) throw new GiftError('This purchase may already be processing. Refresh its status before changing the cart.', 409);
       const current = await call(session, 'get_cart', { shop: f.shop, id: f.cart.id });
       const update = cloneForUpdate(current);
       const line = update.line_items.find((line: Doc) => line.id === lineId);
       if (!line) throw new GiftError('Cart changed. Refresh before editing.', 409);
       if (quantity === 0) update.line_items = update.line_items.filter((line: Doc) => line.id !== lineId); else line.quantity = quantity;
-      try { f.cart = await call(session, 'update_cart', { shop: f.shop, id: current.id, cart: update }, crypto.randomUUID()); }
+      try {
+        f.cart = await call(session, 'update_cart', { shop: f.shop, id: current.id, cart: update }, crypto.randomUUID());
+        // Editing a cart invalidates the reviewed totals and delivery options.
+        delete f.checkout; delete f.review; delete f.verifiedBeforePayment;
+      }
       catch (error) { f.uncertainWrite = true; throw error; }
       return service.view(session);
     },
     async checkout(session: ViewerSession) {
+      const contactEmail = CHECKOUT_CONTACT_EMAIL;
       token(session, true);
       const f = flow(session);
       if (f.checkout || f.uncertainWrite || !f.cart?.line_items?.length) throw new GiftError('Refresh your existing checkout or add a gift first.', 409);
-      const address = f.recipient.shippingAddress!;
-      const destination = { id: `${f.recipient.profile.id}_delivery`, type: 'shipping_address', first_name: address.recipient, ...(address.lastName ? { last_name: address.lastName } : {}), ...(address.phone ? { phone_number: address.phone } : {}), street_address: address.street, address_locality: address.city, address_region: address.region, postal_code: address.postalCode, address_country: address.country };
+      if (f.mode === 'self') {
+        const account = await call(session, 'get_account', {});
+        const addresses: Doc[] = Array.isArray(account.addresses) ? account.addresses : [];
+        const saved = addresses.find(address => address.id === account.preferred_address_id) || addresses[0];
+        if (saved) {
+          f.buyerDestination = structuredClone(saved);
+          f.recipient.shippingAddress = { recipient: saved.first_name || '', lastName: saved.last_name, phone: saved.phone_number, street: saved.street_address, city: saved.address_locality, region: saved.address_region, postalCode: saved.postal_code, country: saved.address_country };
+        }
+      }
+      const address = f.recipient.shippingAddress;
+      const destination = f.mode === 'self' ? f.buyerDestination : { id: `${f.recipient.profile.id}_delivery`, type: 'shipping_address', first_name: address!.recipient, ...(address!.lastName ? { last_name: address!.lastName } : {}), ...(address!.phone ? { phone_number: address!.phone } : {}), street_address: address!.street, address_locality: address!.city, address_region: address!.region, postal_code: address!.postalCode, address_country: address!.country };
       try {
-        f.checkout = await call(session, 'create_checkout', { shop: f.shop, checkout: { cart_id: f.cart.id, line_items: [], fulfillment: { methods: [{ type: 'shipping', destinations: [destination], selected_destination_id: destination.id }] } } }, crypto.randomUUID());
-        // Some merchants require assigning delivery after checkout line IDs exist.
-        if (!recipientMatches(f.checkout, f.recipient) && f.checkout.status === 'incomplete') {
+        f.checkout = await call(session, 'create_checkout', { shop: f.shop, checkout: { cart_id: f.cart.id, line_items: [], ...(contactEmail ? { buyer: { email: contactEmail } } : {}), ...(destination ? { fulfillment: { methods: [{ type: 'shipping', destinations: [destination], selected_destination_id: destination.id }] } } : {}) } }, crypto.randomUUID());
+        // Some stores ignore buyer/delivery fields during creation. Apply the
+        // configured contact to the newly returned document before review.
+        const needsContact = Boolean(contactEmail && f.checkout.buyer?.email !== contactEmail);
+        const needsDestination = Boolean(destination && !recipientMatches(f.checkout, f.recipient) && f.checkout.status === 'incomplete');
+        if (needsContact || needsDestination) {
           const update = cloneForUpdate(f.checkout);
-          const shipping = update.fulfillment?.methods?.filter((method: Doc) => method.type === 'shipping') || [];
-          if (shipping.length) {
-            for (const method of shipping) { method.destinations = [destination]; method.selected_destination_id = destination.id; }
-            f.checkout = await call(session, 'update_checkout', { shop: f.shop, id: f.checkout.id, checkout: update }, crypto.randomUUID());
+          if (needsContact) update.buyer = { ...update.buyer, email: contactEmail };
+          if (needsDestination) {
+            const shipping = update.fulfillment?.methods?.filter((method: Doc) => method.type === 'shipping') || [];
+            for (const method of shipping) { method.destinations = [destination]; method.selected_destination_id = destination!.id; }
           }
+          f.checkout = await call(session, 'update_checkout', { shop: f.shop, id: f.checkout.id, checkout: update }, crypto.randomUUID());
         }
       } catch (error) { f.uncertainWrite = true; throw error; }
       review(f); observe(f);
@@ -275,7 +315,7 @@ export function createGiftingService(options: {
         f.checkout = current; review(f); observe(f);
         throw new GiftError('Checkout changed. Review the current total and confirm again.', 409);
       }
-      if (current.status !== 'ready_for_complete' || !recipientMatches(current, f.recipient)) throw new GiftError('Shop must confirm the streamer delivery address and checkout readiness before payment.', 409);
+      if (current.status !== 'ready_for_complete' || !recipientMatches(current, f.recipient)) throw new GiftError('Shop must confirm the delivery address and checkout readiness before payment.', 409);
       if (!/^[A-Z]{3}$/.test(current.currency || '') || !Array.isArray(current.totals)
         || !current.totals.some((total: Doc) => total.type === 'total' && Number.isSafeInteger(total.amount) && total.amount >= 0)
         || current.totals.some((total: Doc) => !Number.isSafeInteger(total.amount))) throw new GiftError('Shop has not returned a valid final price. Finish checkout on Shop.', 409);
@@ -290,6 +330,28 @@ export function createGiftingService(options: {
         catch { f.uncertainWrite = true; }
       }
       review(f); observe(f);
+      return service.view(session);
+    },
+    async returnFromMerchant(session: ViewerSession) {
+      const f = flow(session);
+      if (!f.checkout || !f.handoffOpened || f.completionAttempted || f.uncertainWrite) throw new GiftError('Refresh the payment status before changing this checkout.', 409);
+      let current: Doc | undefined;
+      try {
+        current = await call(session, 'get_checkout', { shop: f.shop, id: f.checkout.id });
+        f.checkout = current; review(f); observe(f);
+      } catch (error) {
+        if (!(error instanceof ShopMcpError)) throw error;
+        // The user explicitly confirmed decline and closure. A failed read is
+        // not a cancellation or proof of payment; preserve that uncertainty.
+      }
+      if (current?.status === 'completed' || current?.order?.id) throw new GiftError('Shop reports an order was placed. Review its status before starting another purchase.', 409);
+      if (current && !['incomplete', 'requires_escalation', 'ready_for_complete', 'canceled'].includes(current.status)) throw new GiftError('Shop has not resolved this payment. Refresh its status before changing the cart.', 409);
+      ledger.mark(digest([f.shop, f.checkout.id]));
+      (session.retiredCheckouts ||= []).push({ shop: f.shop, checkoutId: f.checkout.id, status: current?.status || 'unverified', userDeclined: true });
+      delete session.flow;
+      session.notice = current
+        ? 'Local cart cleared after you confirmed declining checkout. This does not cancel or refund a merchant order.'
+        : 'Local cart cleared after you confirmed declining checkout. Shop could not verify its status. This does not cancel or refund a merchant order; check the merchant if you are unsure whether payment went through.';
       return service.view(session);
     },
     handoff(session: ViewerSession) {

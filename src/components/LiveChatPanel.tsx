@@ -9,6 +9,11 @@ import {
 import type { ChatMessage, ParticipantRole, RoomParticipant } from '../utils/types';
 
 interface LiveChatPanelProps {
+  shoppingPanel?: ReactNode;
+  onShopQuestion?: (question: string) => void;
+  shopAvailable?: boolean;
+  shopConnected?: boolean;
+  shopBusy?: boolean;
   clipsPanel?: ReactNode;
   clipCount?: number;
   messages: ChatMessage[];
@@ -27,6 +32,11 @@ interface LiveChatPanelProps {
 }
 
 export function LiveChatPanel({
+  shoppingPanel,
+  onShopQuestion,
+  shopAvailable = false,
+  shopConnected = false,
+  shopBusy = false,
   clipsPanel,
   clipCount = 0,
   messages,
@@ -43,8 +53,10 @@ export function LiveChatPanel({
   onDeleteMessage,
   onUpdateSlowMode,
 }: LiveChatPanelProps) {
-  const [panelView, setPanelView] = useState<'chat' | 'crew' | 'clips'>(clipsPanel ? 'clips' : 'chat');
+  const [panelView, setPanelView] = useState<'chat' | 'crew' | 'clips'>('chat');
   const [draft, setDraft] = useState('');
+  const [shopNotice, setShopNotice] = useState('');
+  const [shopOpen, setShopOpen] = useState(false);
   const feedEndRef = useRef<HTMLDivElement | null>(null);
   const canModerate = selfRole !== 'viewer';
 
@@ -52,11 +64,28 @@ export function LiveChatPanel({
 
   useEffect(() => {
     feedEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
+  }, [messages.length, shopNotice]);
+
+  useEffect(() => { if (shopConnected) setShopNotice(''); }, [shopConnected]);
+
+  const isShopCommand = /^@shop(?:\s|$)/i.test(draft.trim());
+  const shopQuestion = draft.trim().replace(/^@shop\s*/i, '').trim();
+  const shopBlocked = isShopCommand && shopConnected && (!shopAvailable || shopBusy || !shopQuestion);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!draft.trim()) return;
+    if (!draft.trim() || !connected) return;
+    if (isShopCommand) {
+      if (shopBlocked) return;
+      setShopOpen(true);
+      if (!shopConnected) {
+        setShopNotice('Shop isn’t connected. Select Connect Shop in the Shop panel to continue.');
+      } else {
+        if (!onShopQuestion) return;
+        setShopNotice('');
+        onShopQuestion(shopQuestion);
+      }
+    }
     onSendMessage(draft);
     setDraft('');
   };
@@ -64,7 +93,7 @@ export function LiveChatPanel({
   return (
     <aside
       aria-label="Stream chat and audience"
-      className="w-full lg:w-[360px] h-[440px] lg:h-auto shrink-0 border-t lg:border-t-0 lg:border-l border-slate-200/80 bg-white flex flex-col"
+      className="w-full lg:w-[360px] h-[600px] lg:h-auto min-h-0 overflow-hidden shrink-0 border-t lg:border-t-0 lg:border-l border-slate-200/80 bg-white flex flex-col"
     >
       {/* Header Switcher */}
       <div className="px-4 py-3 border-b border-slate-200/80 flex items-center justify-between gap-3">
@@ -100,6 +129,13 @@ export function LiveChatPanel({
         </span>
       </div>
 
+      {panelView === 'chat' && shoppingPanel && <div className="shrink-0 border-b border-slate-200 px-3 py-2">
+        <button type="button" aria-expanded={shopOpen} aria-controls="stream-shop-panel" onClick={() => setShopOpen(open => !open)} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700">{shopOpen ? 'Hide Shop' : 'Show Shop'}</button>
+      </div>}
+      <div id="stream-shop-panel" hidden={panelView !== 'chat' || !shopOpen} className="shrink-0 max-h-[55%] overflow-y-auto border-b border-slate-200" aria-label="Shop assistant results">
+        {shoppingPanel}
+      </div>
+
       {panelView === 'clips' && clipsPanel ? clipsPanel : panelView === 'chat' ? (
         <>
           {/* Pinned Announcement */}
@@ -124,7 +160,7 @@ export function LiveChatPanel({
           )}
 
           {/* Chat Feed */}
-          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
+          <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-1">
             {messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center px-6 py-12">
                 <p className="text-sm font-medium text-slate-800">Stream chat is live</p>
@@ -215,6 +251,7 @@ export function LiveChatPanel({
                 );
               })
             )}
+            {shopNotice && <div role="status" className="rounded-xl bg-violet-50 px-3 py-2 text-xs text-violet-950"><span className="font-semibold">@shop</span><p className="mt-1">{shopNotice}</p></div>}
             <div ref={feedEndRef} />
           </div>
 
@@ -226,6 +263,7 @@ export function LiveChatPanel({
               </p>
             )}
 
+            {isShopCommand && <p role="status" className="text-[11px] text-violet-700">{!shopConnected ? 'Shop isn’t connected. Send to open the connection prompt.' : !shopAvailable ? '@shop is available when a camera or screen share is live.' : shopBusy ? 'Shop is finding matches…' : 'Your @shop message appears in room chat. Product results are visible only to you.'}</p>}
             <form onSubmit={handleSubmit} className="flex items-center gap-2">
               <label htmlFor="live-chat-input" className="sr-only">
                 Chat message
@@ -238,13 +276,13 @@ export function LiveChatPanel({
                 placeholder={
                   slowModeSec > 0 && selfRole === 'viewer'
                     ? `Slow mode (${slowModeSec}s)...`
-                    : 'Send a message...'
+                    : 'Message or ask @shop…'
                 }
                 className="flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm text-slate-950 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:border-slate-900 transition-colors"
               />
               <button
                 type="submit"
-                disabled={!draft.trim() || !connected}
+                disabled={!draft.trim() || !connected || shopBlocked}
                 aria-label="Send chat message"
                 className="p-2.5 bg-slate-950 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900"
               >

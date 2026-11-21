@@ -19,7 +19,7 @@ export function createStreamMatchRouter(mcp: ShopMcpClient = createShopMcpClient
       if (limit.count >= 10 || (!limits.has(ip) && limits.size >= 1000)) { res.status(429).json({ error: 'Too many product lookups. Wait a minute before asking again.' }); return; }
       limit.count++; limits.set(ip, limit);
       const result = await mcp.call('search_catalog', { catalog: {
-        query, like: { image: { content_type: frame.mimeType, data: frame.data } }, pagination: { limit: 3 },
+        query, like: [{ image: { content_type: frame.mimeType, data: frame.data } }], pagination: { limit: 3 },
       } });
       // No catalog caching or image rehosting. Only project this lookup's result.
       res.json({ products: productsFrom(result), messages: messagesFrom(result) });

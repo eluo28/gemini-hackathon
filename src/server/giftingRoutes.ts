@@ -9,6 +9,11 @@ const text = (value: unknown, max = 500) => {
   if (typeof value !== 'string' || !value.trim() || value.length > max) throw new GiftError('Invalid gift request.');
   return value;
 };
+function mode(value: unknown): 'gift' | 'self' {
+  if (value === undefined || value === 'gift') return 'gift';
+  if (value === 'self') return 'self';
+  throw new GiftError('Choose a streamer gift or a purchase for yourself.');
+}
 function selection(value: unknown) {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > 20) throw new GiftError('Invalid product options.');
@@ -70,8 +75,8 @@ export function createGiftingRouter(service: GiftingService = createGiftingServi
   route('post', '/disconnect', session => { delete session.connection; delete session.token; delete session.tokenExpiresAt; return service.view(session); });
   route('get', '/state', session => service.view(session));
   route('post', '/search', (session, body) => service.search(session, text(body.roomId, 64), text(body.query)));
-  route('post', '/product', (session, body) => service.product(session, text(body.roomId, 64), text(body.productId), selection(body.selected)));
-  route('post', '/cart/add', (session, body) => service.add(session, text(body.roomId, 64), text(body.productId), text(body.variantId), selection(body.selected)));
+  route('post', '/product', (session, body) => service.product(session, text(body.roomId, 64), text(body.productId), selection(body.selected), mode(body.mode)));
+  route('post', '/cart/add', (session, body) => service.add(session, text(body.roomId, 64), text(body.productId), text(body.variantId), selection(body.selected), mode(body.mode)));
   route('post', '/cart/quantity', (session, body) => {
     if (!Number.isInteger(body.quantity) || body.quantity < 0 || body.quantity > 20) throw new GiftError('Quantity must be 0 to 20.');
     return service.quantity(session, text(body.lineId), body.quantity);
@@ -86,6 +91,10 @@ export function createGiftingRouter(service: GiftingService = createGiftingServi
     return service.complete(session, text(body.reviewId), text(body.instrumentKey));
   });
   route('post', '/refresh', session => service.refresh(session));
+  route('post', '/return-from-merchant', (session, body) => {
+    if (body.confirmClosed !== true) throw new GiftError('Confirm you declined or canceled and closed merchant checkout first.');
+    return service.returnFromMerchant(session);
+  });
   route('post', '/handoff', session => service.handoff(session));
   route('post', '/clear', session => service.clear(session));
   return router;

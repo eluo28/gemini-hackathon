@@ -88,7 +88,7 @@ test('on-demand stream question selects objects before a cropped-image Shop look
   app.use('/api/shop', createStreamMatchRouter({ async call(tool, args) {
     searches++;
     assert.equal(tool, 'search_catalog');
-    assert.deepEqual(args.catalog, { query: item.searchQuery, like: { image: { content_type: frame.mimeType, data: frame.data } }, pagination: { limit: 3 } });
+    assert.deepEqual(args.catalog, { query: item.searchQuery, like: [{ image: { content_type: frame.mimeType, data: frame.data } }], pagination: { limit: 3 } });
     return { products: [], messages: [{ content: 'No matching products', type: 'info' }] };
   } }));
   const server = app.listen(0, '127.0.0.1');

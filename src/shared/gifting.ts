@@ -5,7 +5,11 @@ export interface GiftProduct {
   selected: { name: string; label: string }[]; amount: number; currency: string; available: boolean;
 }
 export interface GiftAlert { simulated?: boolean; id: string; roomId: string; recipient: string; createdAt: number }
+export type PurchaseMode = 'gift' | 'self';
+export interface PendingPurchase { shop: string; variantId: string; mode: PurchaseMode }
 export interface GiftView {
+  notice?: string;
+  mode?: PurchaseMode;
   simulated: boolean;
   connected: boolean;
   recipient: string;
