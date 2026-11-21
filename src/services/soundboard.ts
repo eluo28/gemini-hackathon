@@ -1,13 +1,15 @@
 export const SOUNDBOARD_SOUNDS = [
-  { id: 'air-horn', name: 'Air horn', description: 'Make some noise', duration: 3.2 },
+  { id: 'air-horn', name: 'MLG airhorn', description: 'The classic gamer airhorn', duration: 3.004082 },
   { id: 'applause', name: 'Applause', description: 'A round of applause', duration: 4 },
   { id: 'victory', name: 'Victory', description: 'Celebrate the win', duration: 3.2 },
   { id: 'drum-sting', name: 'Drum sting', description: 'Land the punchline', duration: 2.8 },
 ] as const;
 export type SoundboardSound = typeof SOUNDBOARD_SOUNDS[number]['id'];
 
-/** Original synthesized effects: no downloads or third-party audio assets. */
-export function renderSoundboardSound(id: SoundboardSound, sampleRate: number): Float32Array<ArrayBuffer> {
+const MLG_AIRHORN_URL = '/audio/mlg-airhorn.mp3';
+
+/** The remaining effects are synthesized; the MLG airhorn uses its bundled recording. */
+export function renderSoundboardSound(id: Exclude<SoundboardSound, 'air-horn'>, sampleRate: number): Float32Array<ArrayBuffer> {
   const sound = SOUNDBOARD_SOUNDS.find(s => s.id === id);
   if (!sound) throw new Error('Unknown soundboard sound.');
   const samples = new Float32Array(Math.ceil(sound.duration * sampleRate));
@@ -17,11 +19,7 @@ export function renderSoundboardSound(id: SoundboardSound, sampleRate: number): 
   for (let i = 0; i < samples.length; i++) {
     const t = i / sampleRate;
     let value = 0;
-    if (id === 'air-horn') {
-      const pulse = t % 1;
-      const envelope = pulse < .75 ? Math.min(1, pulse / .025, (.75 - pulse) / .09) : 0;
-      value = envelope * (tone(t, 220) + .6 * tone(t, 277.18) + .4 * tone(t, 440)) * .35;
-    } else if (id === 'applause') {
+    if (id === 'applause') {
       const clap = Math.exp(-((t * 7) % 1) * 9) + .7 * Math.exp(-((t * 11 + .3) % 1) * 10);
       value = noise() * (.12 + clap * .45) * Math.min(1, t * 5, (sound.duration - t) / .8);
     } else if (id === 'victory') {
@@ -52,6 +50,19 @@ export function createSoundboard(input: MediaStream) {
   const microphone = inputAudioTracks.length ? context.createMediaStreamSource(new MediaStream(inputAudioTracks)) : null;
   microphone?.connect(destination);
   const stream = new MediaStream([...input.getVideoTracks(), ...destination.stream.getAudioTracks()]);
+  let airhornBuffer: Promise<AudioBuffer> | null = null;
+  const loadAirhorn = () => {
+    if (!airhornBuffer) {
+      airhornBuffer = fetch(MLG_AIRHORN_URL)
+        .then(response => {
+          if (!response.ok) throw new Error('Could not load the MLG airhorn. Try again.');
+          return response.arrayBuffer();
+        })
+        .then(bytes => context.decodeAudioData(bytes))
+        .catch(error => { airhornBuffer = null; throw error; });
+    }
+    return airhornBuffer;
+  };
   let current: AudioBufferSourceNode | null = null;
   let cancel: (() => void) | null = null;
   let stopped = false;
@@ -68,9 +79,16 @@ export function createSoundboard(input: MediaStream) {
       const token = sequence;
       await context.resume();
       if (stopped || token !== sequence) return false;
-      const data = renderSoundboardSound(id, context.sampleRate);
-      const buffer = context.createBuffer(1, data.length, context.sampleRate);
-      buffer.copyToChannel(data, 0);
+      let buffer: AudioBuffer;
+      if (id === 'air-horn') {
+        buffer = await loadAirhorn();
+      } else {
+        const data = renderSoundboardSound(id, context.sampleRate);
+        buffer = context.createBuffer(1, data.length, context.sampleRate);
+        buffer.copyToChannel(data, 0);
+      }
+      // Stop, leaving the room, or another sound can happen while the MP3 loads.
+      if (stopped || token !== sequence) return false;
       const source = context.createBufferSource(); source.buffer = buffer;
       effects.gain.value = Math.max(0, Math.min(1, volume));
       source.connect(effects); current = source;

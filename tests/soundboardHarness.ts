@@ -3,7 +3,7 @@ import { createStageCapture } from '../src/services/stageCapture';
 
 document.querySelector<HTMLButtonElement>('#run')!.onclick = async () => {
   const result = document.querySelector('#result')!;
-  result.textContent = 'Recording applause through the stage mixer…';
+  result.textContent = 'Recording the MLG airhorn through the stage mixer…';
   const audio = new AudioContext();
   await audio.resume();
   const silentInput = audio.createMediaStreamDestination();
@@ -22,13 +22,13 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = async () => {
     const chunks: Blob[] = [];
     recorder.ondataavailable = e => chunks.push(e.data);
     recorder.start(100);
-    const completed = await board.play('applause', .4);
+    const completed = await board.play('air-horn', .4);
     await new Promise<void>(resolve => { recorder!.onstop = () => resolve(); recorder!.stop(); });
     const decoded = await audio.decodeAudioData(await new Blob(chunks).arrayBuffer());
     const pcm = decoded.getChannelData(0);
     const rms = Math.sqrt(pcm.reduce((sum, sample) => sum + sample * sample, 0) / pcm.length);
     if (!completed || rms < .01 || mic.enabled || !board.stream.getAudioTracks()[0].enabled) throw new Error(`Recorded audio routing failed: RMS ${rms}`);
-    const interrupted = board.play('victory', .4);
+    const interrupted = board.play('air-horn', .4);
     board.stop();
     if (await interrupted) throw new Error('Stopped playback must not trigger detection.');
     board.dispose();

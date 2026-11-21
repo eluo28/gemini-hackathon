@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderSoundboardSound, SOUNDBOARD_SOUNDS } from './soundboard';
 
-test('every sound has audible, bounded PCM with the advertised length and faded edges', () => {
+test('every synthesized sound has audible, bounded PCM with the advertised length and faded edges', () => {
   for (const sound of SOUNDBOARD_SOUNDS) {
+    if (sound.id === 'air-horn') continue;
     const rate = 24_000;
     const pcm = renderSoundboardSound(sound.id, rate);
     assert.equal(pcm.length, Math.ceil(sound.duration * rate));
