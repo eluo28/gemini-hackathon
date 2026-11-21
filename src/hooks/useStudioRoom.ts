@@ -19,7 +19,7 @@ import {
   int16ToBase64,
   RELAY_TARGET_SAMPLE_RATE,
 } from '../utils/audioRelay';
-import { ClipRingBuffer, dispatchClipToSink } from '../services/clipSink';
+import { dispatchClipToSink } from '../services/clipSink';
 import type {
   ClientWsMessage,
   RoomsListResponse,
@@ -195,7 +195,6 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const [selfRole, setSelfRole] = useState<ParticipantRole>(initialContext.current.profile.role);
   const [isLive, setIsLive] = useState(false);
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
-  const [isAutoRecording, setIsAutoRecording] = useState(false);
   const [lastClipMarker, setLastClipMarker] = useState<ClipMarkerEvent | null>(null);
   const [streamEndedNotice, setStreamEndedNotice] = useState<string | null>(null);
   const [participants, setParticipants] = useState<RoomParticipant[]>([]);
@@ -240,9 +239,6 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const peerPlayCursorRef = useRef<Map<string, number>>(new Map());
   const usingSyntheticAudioRef = useRef<boolean>(false);
   const meterAudioCtxRef = useRef<AudioContext | null>(null);
-  const autoRecorderRef = useRef<MediaRecorder | null>(null);
-  const rollingBufferRef = useRef<ClipRingBuffer<Blob>>(new ClipRingBuffer<Blob>(60));
-  const activeMimeTypeRef = useRef<string>('video/webm');
   const lastClipMarkMsRef = useRef<number>(0);
   const clipBannerTimerRef = useRef<number | null>(null);
   const synthAnimRef = useRef<number | null>(null);
@@ -828,77 +824,6 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     [closeAllPeers, refreshDirectory, selectedAudioId, selectedVideoId, sendWs, startLocalMedia, unlockAudio]
   );
 
-  // Automatic local rolling 60-second buffer while live (held in-memory for downstream ClipSinkAdapter)
-  useEffect(() => {
-    if (
-      !hasJoined ||
-      !isLive ||
-      selfRole === 'viewer' ||
-      !localStream ||
-      typeof MediaRecorder === 'undefined'
-    ) {
-      if (autoRecorderRef.current && autoRecorderRef.current.state !== 'inactive') {
-        try {
-          autoRecorderRef.current.stop();
-        } catch {
-          // ignore
-        }
-      }
-      autoRecorderRef.current = null;
-      rollingBufferRef.current.clear();
-      setIsAutoRecording(false);
-      return;
-    }
-
-    const mimeCandidates = [
-      'video/webm;codecs=vp9,opus',
-      'video/webm;codecs=vp8,opus',
-      'video/webm',
-    ];
-    const mimeType = mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m)) || '';
-    activeMimeTypeRef.current = mimeType || 'video/webm';
-
-    let recorder: MediaRecorder;
-    try {
-      recorder = mimeType
-        ? new MediaRecorder(localStream, { mimeType })
-        : new MediaRecorder(localStream);
-    } catch {
-      setIsAutoRecording(false);
-      return;
-    }
-
-    rollingBufferRef.current.clear();
-    recorder.ondataavailable = (ev) => {
-      if (ev.data && ev.data.size > 0) {
-        rollingBufferRef.current.push(ev.data);
-      }
-    };
-
-    try {
-      recorder.start(1000);
-      autoRecorderRef.current = recorder;
-      setIsAutoRecording(true);
-    } catch {
-      setIsAutoRecording(false);
-    }
-
-    return () => {
-      if (recorder.state !== 'inactive') {
-        try {
-          recorder.stop();
-        } catch {
-          // ignore
-        }
-      }
-      if (autoRecorderRef.current === recorder) {
-        autoRecorderRef.current = null;
-      }
-      rollingBufferRef.current.clear();
-      setIsAutoRecording(false);
-    };
-  }, [hasJoined, isLive, localStream, selfRole]);
-
   const triggerClipMark = useCallback((source: 'manual' | 'voice' = 'manual') => {
     if (profileRef.current.role === 'viewer') return;
     const now = Date.now();
@@ -1109,12 +1034,8 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
             const marker = msg.marker;
             setLastClipMarker(marker);
             if (profileRef.current.role !== 'viewer') {
-              const chunks = rollingBufferRef.current.snapshot();
               void dispatchClipToSink({
                 marker,
-                mimeType: activeMimeTypeRef.current,
-                chunks,
-                bufferedSeconds: chunks.length,
               });
             }
             if (clipBannerTimerRef.current) {
@@ -1574,7 +1495,6 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     selfRole,
     isLive,
     streamStartedAt,
-    isAutoRecording,
     lastClipMarker,
     streamEndedNotice,
     participants,

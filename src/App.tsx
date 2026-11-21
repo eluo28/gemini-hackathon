@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { AutoClipper, LiveClipsPanel, MyClipsPage } from './components/AutoClipper';
+import { useAutoClipper } from './hooks/useAutoClipper';
 import { JoinStreamGate } from './components/JoinStreamGate';
 import { LiveChatPanel } from './components/LiveChatPanel';
 import { LiveStage } from './components/LiveStage';
@@ -39,6 +41,8 @@ async function copyTextReliable(text: string): Promise<boolean> {
 
 export default function App() {
   const studio = useStudioRoom(getInitialRoomFromUrl());
+  const clipper = useAutoClipper({ active: studio.hasJoined && studio.isLive && studio.selfRole !== 'viewer', roomId: studio.roomId, localStream: studio.localStream, remoteStreams: studio.remoteStreams, participants: studio.participants, selfName: studio.selfName, messages: studio.chatMessages });
+  const [showMyClips, setShowMyClips] = useState(new URLSearchParams(window.location.search).get('view') === 'clips');
   const [showRoomSwitcher, setShowRoomSwitcher] = useState(false);
   const [copiedInvite, setCopiedInvite] = useState(false);
 
@@ -51,9 +55,11 @@ export default function App() {
     }
   };
 
+  if (showMyClips) return <MyClipsPage clipper={clipper} onBack={() => { setShowMyClips(false); window.history.replaceState(null, '', '/'); }} />;
+
   if (!studio.hasJoined) {
     return (
-      <JoinStreamGate
+      <><button className="ac-library-link" onClick={() => setShowMyClips(true)}>My Clips ({clipper.queue.length})</button><JoinStreamGate
         initialRoomId={studio.roomId}
         initialRole={studio.selfRole}
         avatar={studio.selfAvatar}
@@ -67,7 +73,7 @@ export default function App() {
             avatarUrl,
           });
         }}
-      />
+      /></>
     );
   }
 
@@ -102,7 +108,7 @@ export default function App() {
           roomCategory={studio.roomCategory}
           isLive={studio.isLive}
           streamStartedAt={studio.streamStartedAt}
-          isAutoRecording={studio.isAutoRecording}
+          isAutoRecording={clipper.recording}
           lastClipMarker={studio.lastClipMarker}
           streamEndedNotice={studio.streamEndedNotice}
           audioBlocked={studio.audioBlocked}
@@ -145,6 +151,8 @@ export default function App() {
         />
 
         <LiveChatPanel
+          clipsPanel={studio.selfRole !== 'viewer' ? <LiveClipsPanel clipper={clipper} enabled={studio.isLive} /> : undefined}
+          clipCount={clipper.queue.length}
           messages={studio.chatMessages}
           pinnedMessage={studio.pinnedMessage}
           participants={studio.participants}
@@ -160,6 +168,7 @@ export default function App() {
           onUpdateSlowMode={(sec) => studio.updateRoomMeta({ slowModeSec: sec })}
         />
       </main>
+      {studio.selfRole !== 'viewer' && <AutoClipper clipper={clipper} enabled={studio.isLive} />}
     </div>
   );
 }
