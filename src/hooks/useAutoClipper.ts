@@ -167,7 +167,8 @@ export function useAutoClipper(options: Options) {
   }, [run, flush]);
   // Playback completion is a guaranteed trigger, separate from AI detection.
   const detectSoundboard = useCallback(() => {
-    if (!ready || !recorder.current) return;
+    // Playback stays unrestricted; existing clip work keeps priority.
+    if (!ready || !recorder.current || inFlight.current || pending.current) return;
     if (soundboardTimer.current) clearTimeout(soundboardTimer.current);
     const token = generation.current;
     const triggeredAt = Date.now();
@@ -175,7 +176,7 @@ export function useAutoClipper(options: Options) {
     const check = () => {
       soundboardTimer.current = null;
       if (token !== generation.current || !recorder.current) return;
-      if (pending.current) return; // An already-triggered full judge includes this moment.
+      if (inFlight.current || pending.current) return; // Leave current processing and its status untouched.
       if (recorder.current.bufferedSeconds < 1) {
         if (Date.now() < deadline) soundboardTimer.current = setTimeout(check, 250);
         else setError('The clip buffer is not ready. Play the sound again after it starts.');

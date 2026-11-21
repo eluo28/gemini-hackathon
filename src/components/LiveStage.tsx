@@ -41,7 +41,6 @@ export interface StreamCaptureHandle { capture: (sourceId: string) => HTMLCanvas
 
 interface LiveStageProps {
   soundboardEnabled: boolean;
-  soundboardBusy: boolean;
   soundboardPlaying: SoundboardSound | null;
   soundboardError: string;
   onPlaySoundboard: (sound: SoundboardSound, volume: number) => void;
@@ -107,7 +106,7 @@ interface LiveStageProps {
 }
 
 export function LiveStage({
-  soundboardEnabled, soundboardBusy, soundboardPlaying, soundboardError, onPlaySoundboard, onStopSoundboard,
+  soundboardEnabled, soundboardPlaying, soundboardError, onPlaySoundboard, onStopSoundboard,
   captureRef,
   onProfileChange,
   roomId,
@@ -603,7 +602,7 @@ export function LiveStage({
               </button>
             </div>
 
-            {showSoundboard && <Soundboard enabled={soundboardEnabled} busy={soundboardBusy} playing={soundboardPlaying} error={soundboardError}
+            {showSoundboard && <Soundboard enabled={soundboardEnabled} playing={soundboardPlaying} error={soundboardError}
               onPlay={onPlaySoundboard} onStop={onStopSoundboard} onClose={() => { onStopSoundboard(); setShowSoundboard(false); }} />}
 
             {showDevices && (audioDevices.length > 0 || videoDevices.length > 0) && (
