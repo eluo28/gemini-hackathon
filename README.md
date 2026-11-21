@@ -501,6 +501,12 @@ and send it. `{this clip}` also resolves the selected clip (or the only saved
 clip). Unknown or deleted references are rejected rather than falling back to
 live video.
 
+You can also reference a saved clip by its title, for example
+`@shop in the Laughing Video Call Moment With 'Clip It' Reaction clip, find me the plant`.
+Titles match ignoring case and punctuation. Missing or duplicate titles show an error
+and never fall back to analyzing the current stream; use **Shop this clip** to select
+an exact clip in those cases. Only clips in your private saved library can resolve.
+
 Clip shopping takes three frames at 10%, 50%, and 90% of the saved clip, sends
 those three images in one Gemini request, and reuses the live Shop matching and
 cart flow. Each object is cropped from its returned source-frame index. The
