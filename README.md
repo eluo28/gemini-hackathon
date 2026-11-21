@@ -462,6 +462,13 @@ preserves notices and links to the returned merchant checkout. Products remain
 eligible to appear in discovery even when their store requires merchant checkout.
 Search does not expose a reliable checkout-eligibility filter.
 
+Shop recommendations show products from one store at a time, with no grouped
+sections. With an existing cart, searches are restricted to that store. With an
+empty cart, the first returned match chooses the store for that response. If fewer
+than three matches belong to it, one additional search requests products from that
+store. Matches from other stores are omitted, so fewer than three may still appear. There is
+no fallback to other stores when the current cart’s store has no matches.
+
 Each cart contains items from one store. Choosing an item from a different store
 asks whether to clear the current cart and switch stores. Cancel keeps the existing
 cart; confirming clears it and adds the selected item. An active checkout or an

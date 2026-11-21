@@ -32,7 +32,7 @@ const NO_CLIPS: ShopClip[] = [];
 
 export interface ShopChatHandle { ask: (question: string) => void }
 
-export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGift, onBuy, purchaseBusy = false, clips = NO_CLIPS, purchaseBlockReason = '', onReviewCart, pendingPurchase, embedded = false, controllerRef, onBusyChange, compact = false }: {
+export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGift, onBuy, purchaseBusy = false, clips = NO_CLIPS, cartShop, purchaseBlockReason = '', onReviewCart, pendingPurchase, embedded = false, controllerRef, onBusyChange, compact = false }: {
   embedded?: boolean;
   compact?: boolean;
   controllerRef?: Ref<ShopChatHandle>;
@@ -44,6 +44,7 @@ export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGi
   canGift: boolean;
   purchaseBusy?: boolean;
   clips?: ShopClip[];
+  cartShop?: string;
   purchaseBlockReason?: string;
   onReviewCart?: () => void;
   pendingPurchase?: PendingPurchase | null;
@@ -100,7 +101,7 @@ export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGi
       if (!answer.items.length) return;
       setStatus('Finding similar products on Shop…');
       // Independent lookups, bounded to two identified objects. No auto-retries.
-      const results = await Promise.allSettled(answer.items.slice(0, 2).map(item => post<{ products: GiftProduct[]; messages: GiftMessage[] }>('match-stream-item', { query: item.searchQuery, image: encode(crop(frames[item.frameIndex].canvas, item)) }, controller.signal)));
+      const results = await Promise.allSettled(answer.items.slice(0, 2).map(item => post<{ products: GiftProduct[]; messages: GiftMessage[] }>('match-stream-item', { query: item.searchQuery, ...(cartShop ? { shop: cartShop } : {}), image: encode(crop(frames[item.frameIndex].canvas, item)) }, controller.signal)));
       if (controller.signal.aborted) return;
       const found: GiftProduct[] = [], warnings: GiftMessage[] = [];
       const seen = new Set<string>(); const failures: string[] = [];
@@ -112,9 +113,26 @@ export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGi
           if (!seen.has(key)) { seen.add(key); found.push(product); }
         }
       }
-      setProducts(found.slice(0, 3)); setNotices(warnings);
+      const shop = cartShop || found[0]?.shop;
+      // Refine discovery to the chosen store to fill out its product choices.
+      // This is a bounded new search, not a retry of a failed request.
+      if (!cartShop && shop && found.filter(product => product.shop === shop).length < 3) {
+        try {
+          const item = answer.items[0];
+          const result = await post<{ products: GiftProduct[]; messages: GiftMessage[] }>('match-stream-item', {
+            query: item.searchQuery, shop, image: encode(crop(frames[item.frameIndex].canvas, item)),
+          }, controller.signal);
+          warnings.push(...result.messages);
+          for (const product of result.products) {
+            const key = `${product.shop}:${product.variantId}`;
+            if (!seen.has(key)) { seen.add(key); found.push(product); }
+          }
+        } catch (error) { failures.push(error instanceof Error ? error.message : 'The store lookup failed.'); }
+      }
+      if (controller.signal.aborted) return;
+      setProducts(found.filter(product => product.shop === shop).slice(0, 3)); setNotices(warnings);
       if (failures.length) setError([...new Set(failures)].join(' '));
-      else if (!found.length) setError('I found the object in the video, but no purchasable Shop matches were returned. Try another angle or a clearer view.');
+      else if (!found.length) setError(cartShop ? 'No matches were found in your cart’s store. Clear the cart to search other stores.' : 'I found the object in the video, but no purchasable Shop matches were returned. Try another angle or a clearer view.');
     } catch (e) {
       if (!controller.signal.aborted) {
         setError(e instanceof Error ? e.message : 'Could not inspect this stream.');
@@ -127,6 +145,7 @@ export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGi
   }
   const canGiftProduct = canGift && (!shoppingClip || shoppingClip.roomId === roomId);
   const adding = (product: GiftProduct, mode: 'gift' | 'self') => pendingPurchase?.mode === mode && pendingPurchase.shop === product.shop && pendingPurchase.variantId === product.variantId;
+  const visibleProducts = products.filter(product => !cartShop || product.shop === cartShop);
   return <section aria-label="Ask about this stream" className={embedded ? 'space-y-3' : 'w-full max-w-4xl mx-auto rounded-2xl border border-violet-200 bg-white p-4 space-y-3'}>
     {!compact && <div>{!embedded && <h2 className="font-semibold text-slate-950">Ask about this stream</h2>}<p className="mt-1 text-xs text-slate-500">“What’s that mug in the background?” We look at a snapshot only when you ask.</p></div>}
     {compact && turns.length === 0 && <p className="text-xs text-slate-500">Ask <span className="font-semibold text-violet-700">@shop</span> about the live stream or a saved clip.</p>}
@@ -135,8 +154,8 @@ export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGi
     {shoppingClip && <p className="text-xs text-slate-500">Inspecting saved clip “{shopClipTitle(shoppingClip)}” · three sampled frames.</p>}
     {error && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">{error}</p>}
     {notices.map((notice, index) => <div key={index} className="rounded-lg bg-amber-50 p-2 text-xs text-amber-950"><p>{notice.content}</p>{notice.links.map(link => <a key={link.href} href={link.href} target="_blank" rel="noreferrer" className="mr-2 underline">{link.label}</a>)}{notice.images.map(image => <img key={image.url} src={image.url} alt={image.alt} className="mt-2 max-h-32" />)}</div>)}
-    {products.length > 0 && purchaseBlockReason && <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-950"><p>{purchaseBlockReason}</p>{onReviewCart && <button type="button" onClick={onReviewCart} className="mt-1 font-semibold underline">Open cart</button>}</div>}
-    <div className={compact ? "space-y-2" : "grid gap-3 sm:grid-cols-3"}>{products.map(product => <article key={`${product.shop}:${product.variantId}`} className={compact ? "grid grid-cols-[56px_minmax(0,1fr)] gap-x-2 gap-y-1 rounded-xl border border-slate-200 p-2 text-xs" : "rounded-xl border border-slate-200 p-3 space-y-2"}>
+    {visibleProducts.length > 0 && purchaseBlockReason && <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-950"><p>{purchaseBlockReason}</p>{onReviewCart && <button type="button" onClick={onReviewCart} className="mt-1 font-semibold underline">Open cart</button>}</div>}
+    <div className={compact ? "space-y-2" : "grid gap-3 sm:grid-cols-3"}>{visibleProducts.map(product => <article key={`${product.shop}:${product.variantId}`} className={compact ? "grid grid-cols-[56px_minmax(0,1fr)] gap-x-2 gap-y-1 rounded-xl border border-slate-200 p-2 text-xs" : "rounded-xl border border-slate-200 p-3 space-y-2"}>
       {!compact && <span className="text-xs font-semibold text-violet-700">Similar find on Shop</span>}
       {product.image && <img src={product.image} alt={product.title} loading="lazy" className={compact ? "col-start-1 row-span-5 h-14 w-14 object-contain" : "h-28 w-full object-contain"} />}
       <h3 className={compact ? "col-start-2 line-clamp-2 text-xs font-semibold leading-4" : "text-sm font-semibold"}>{product.title}</h3><p className="col-start-2 text-xs text-slate-500 break-words">{product.seller}</p>
@@ -146,7 +165,7 @@ export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGi
       <button type="button" aria-busy={adding(product, 'gift')} disabled={purchaseBusy || !canGiftProduct || !product.available} onClick={() => onGift(product)} className={`col-span-2 w-full rounded-lg px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed ${purchaseBusy && !adding(product, 'gift') ? 'bg-slate-100 text-slate-400' : !canGiftProduct || !product.available ? 'bg-violet-700 text-white opacity-40' : 'bg-violet-700 text-white'}`} >{adding(product, 'gift') ? 'Adding gift…' : !product.available ? 'Unavailable' : canGiftProduct ? 'Gift to streamer' : shoppingClip && shoppingClip.roomId !== roomId ? 'Gifting requires the source room' : 'Creator gifting unavailable'}</button>
       <button type="button" aria-busy={adding(product, 'self')} disabled={purchaseBusy || !product.available} onClick={() => onBuy(product)} className={`col-span-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed ${purchaseBusy && !adding(product, 'self') ? 'bg-slate-100 text-slate-400' : 'text-slate-900'}`}>{adding(product, 'self') ? 'Adding for you…' : 'Buy for myself'}</button>
     </article>)}</div>
-    {products.length > 0 && <p className="text-xs text-slate-500">These are similar products, not verified exact matches. Price and availability are rechecked before adding to your cart.</p>}
+    {visibleProducts.length > 0 && <p className="text-xs text-slate-500">These are similar products, not verified exact matches. Price and availability are rechecked before adding to your cart.</p>}
     {busy && <p role="status" className="text-sm text-violet-700">{status}</p>}
     {!compact && <form onSubmit={e => { e.preventDefault(); void ask(); }} className="flex gap-2">
       <label className="flex-1"><span className="sr-only">Question about an object in the stream</span><input ref={questionInput} aria-label="Question about an object in the stream" value={question} onChange={e => setQuestion(e.target.value)} maxLength={500} required disabled={inputDisabled} placeholder={isLive ? 'Ask about something you can see…' : 'Questions are available when the stream is live'} className="w-full rounded-xl border border-slate-300 p-3 text-sm disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed disabled:caret-transparent" /></label>

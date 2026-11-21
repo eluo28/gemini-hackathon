@@ -127,3 +127,33 @@ test('clip questions retain the chosen frame index and timestamp for matching th
   assert.equal(result.items[0].frameIndex, 2);
   assert.equal(result.items[0].timestampSec, 18);
 });
+
+test('cart-store matches constrain Shop search and omit offers from other stores', async t => {
+  let calls = 0;
+  const app = express();
+  app.use('/api/shop', createStreamMatchRouter({ async call(tool, args) {
+    calls++;
+    assert.equal(tool, 'search_catalog');
+    assert.deepEqual((args.catalog as { filters: unknown }).filters, { shops: ['cart-store.myshopify.com'] });
+    return { products: ['cart-store.myshopify.com', 'other-store.myshopify.com'].map((shop, index) => ({
+      id: `product-${index}`, title: `Mug ${index}`, variants: [{
+        id: `variant-${index}`, url: `https://${shop}/products/mug`, seller: { domain: shop },
+        price: { amount: 1000, currency: 'USD' }, availability: { available: true },
+      }],
+    })) };
+  } }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const post = (shop: unknown) => fetch(base + '/api/shop/match-stream-item', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base },
+    body: JSON.stringify({ query: item.searchQuery, image: frame, shop }),
+  });
+  for (const invalid of ['https://store.example/products', '', ['store.example']]) assert.equal((await post(invalid)).status, 400);
+  assert.equal(calls, 0);
+  const response = await post('cart-store.myshopify.com');
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).products.map((product: { shop: string }) => product.shop), ['cart-store.myshopify.com']);
+  assert.equal(calls, 1);
+});
