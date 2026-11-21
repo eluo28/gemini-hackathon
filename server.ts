@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { requireProfileOrigin } from './src/server/profileOrigin';
 import { createItemDetectionRouter } from './src/server/itemDetectionRoutes';
 import { createShopRouter } from './src/server/shopRoutes';
 import { getStreamer, saveStreamer } from './src/server/streamerProfiles';
@@ -234,15 +235,10 @@ async function startServer() {
     res.json({ shippingAddress: entry.shippingAddress });
   });
 
-  app.post('/api/rooms/:roomId/streamer', (req, res) => {
+  app.post('/api/rooms/:roomId/streamer', requireProfileOrigin(), (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(req.params.roomId)) {
       res.status(400).json({ error: 'Invalid room.' });
-      return;
-    }
-    const origin = req.get('origin');
-    if (origin && origin !== `${req.protocol}://${req.get('host')}` && origin !== process.env.APP_URL) {
-      res.status(403).json({ error: 'Profile changes must come from this app.' });
       return;
     }
     const entry = getStreamer(req.params.roomId);
