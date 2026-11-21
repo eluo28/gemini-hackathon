@@ -450,3 +450,11 @@ optionally `GEMINI_ITEM_MODEL` (default `gemini-4-hydrogen`), then restart the l
 server. No Gemini calls happen until **Ask** is pressed. Missing keys, unclear
 objects, unsupported video, and Shop errors are shown in the panel. This feature
 uses image snapshots, not Gemini's continuous Live API.
+
+
+### Unified shopping panel
+
+**Shop this stream** now contains Shop connection, the visual question chat,
+product matches, and a collapsible **Cart** area. There is no separate gift panel
+above the video. Choosing a matched product expands its options and gift cart in
+place, preserving the same Shop session. Existing carts reopen automatically.

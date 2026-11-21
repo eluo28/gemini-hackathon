@@ -1,3 +1,4 @@
+import type { StreamerProfile } from '../shared/protocol';
 import { StreamShopChat } from './StreamShopChat';
 import type { GiftProduct } from '../shared/gifting';
 import { lazy, Suspense } from 'react';
@@ -150,72 +151,11 @@ export function LiveStage({
 }: LiveStageProps) {
   const stageGridRef = useRef<HTMLDivElement>(null);
   const [giftProducts, setGiftProducts] = useState<GiftProduct[]>([]);
-  const [showGifts, setShowGifts] = useState(false);
   const [streamer, setStreamer] = useState<StreamerProfile | null>(null);
 
-  const [recipientDetailsSupported, setRecipientDetailsSupported] = useState(false);
-  const [canEditProfile, setCanEditProfile] = useState(false);
-  const [profileFormOpen, setProfileFormOpen] = useState(false);
-  const [profileError, setProfileError] = useState('');
-  const [savingProfile, setSavingProfile] = useState(false);
-  const emptyAddress = { recipient: '', lastName: '', phone: '', street: '', city: '', region: '', postalCode: '', country: '' };
-  const [profileDraft, setProfileDraft] = useState({ displayName: '', handle: '', bio: '', giftingEnabled: false, shippingAddress: emptyAddress });
-
-  const openProfileForm = async () => {
-    setProfileError('');
-    setProfileDraft({ displayName: streamer?.displayName || selfName, handle: streamer?.handle || '', bio: streamer?.bio || '', giftingEnabled: streamer?.giftingEnabled || false, shippingAddress: { ...emptyAddress } });
-    if (streamer) {
-      try {
-        const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/streamer/settings`);
-        if (!response.ok) throw new Error('Could not load your profile settings.');
-        const data = await response.json();
-        setProfileDraft(draft => ({ ...draft, shippingAddress: { ...emptyAddress, ...data.shippingAddress } }));
-      } catch {
-        setProfileError('Could not load your profile settings. Try again.');
-        return;
-      }
-    }
-    setProfileFormOpen(true);
-  };
-
-  const saveProfile = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const targetRoom = roomId;
-    setSavingProfile(true);
-    setProfileError('');
-    try {
-      const response = await fetch(`/api/rooms/${encodeURIComponent(targetRoom)}/streamer`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profileDraft),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not save profile.');
-      setStreamer(data.streamer);
-      setCanEditProfile(data.canEdit);
-      setProfileFormOpen(false);
-    } catch (error) {
-      setProfileError(error instanceof Error ? error.message : 'Could not save profile.');
-    } finally {
-      setSavingProfile(false);
-    }
-  };
-
   useEffect(() => {
-    const controller = new AbortController();
-    setShowGifts(false);
+    setGiftProducts([]);
     setStreamer(null);
-    setCanEditProfile(false);
-    setProfileFormOpen(false);
-    setProfileError('');
-    void fetch(`/api/rooms/${encodeURIComponent(roomId)}/streamer`, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Could not load streamer');
-        const data: RoomStreamerResponse = await response.json();
-        if (!controller.signal.aborted) { setStreamer(data.streamer); setCanEditProfile(data.canEdit); setRecipientDetailsSupported(data.recipientDetailsSupported === true); }
-      })
-      .catch(() => {
-        // The stage remains usable if creator metadata cannot be loaded.
-      });
-    return () => controller.abort();
   }, [roomId]);
 
   const [editingMeta, setEditingMeta] = useState(false);
@@ -369,61 +309,7 @@ export function LiveStage({
         </button>
       </div>
 
-      {streamer && streamer.roomId === roomId && (
-        <section aria-label="About the streamer" className="mx-5 md:mx-7 mb-4 rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div aria-hidden="true" className="flex h-11 w-11 items-center justify-center rounded-full bg-violet-100 text-sm font-bold text-violet-800">
-              {streamer.initials}
-            </div>
-            <div className="flex-1">
-              <h2 className="text-sm font-semibold text-slate-950">{streamer.displayName}</h2>
-              <p className="text-xs text-slate-500">{streamer.handle}</p>
-            </div>
-            {selfRole === 'host' && canEditProfile && (
-              <button type="button" onClick={() => void openProfileForm()} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold">Edit profile</button>
-            )}
-            <button type="button" disabled={!streamer.giftingEnabled} onClick={() => { setGiftProducts([]); setShowGifts(true); }} aria-describedby="gifting-status" className="rounded-xl bg-violet-700 px-4 py-2 text-xs font-semibold text-white disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed">
-              Gift to {streamer.displayName}
-            </button>
-          </div>
-          <p className="mt-3 text-sm text-slate-600">{streamer.bio}</p>
-          <p id="gifting-status" className="mt-2 text-xs text-slate-500">{streamer.giftingEnabled ? 'Send a product gift while you watch.' : 'The creator has not enabled gift delivery.'}</p>
-        </section>
-      )}
-
       {lastGift && lastGift.roomId === roomId && <div role="status" className="mx-5 md:mx-7 mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">{lastGift.simulated ? 'Demo gift confirmed for ' : 'A viewer sent a gift to '}{lastGift.recipient}!</div>}
-      {showGifts && streamer && <Suspense fallback={<p className="mx-5 mb-4 text-sm">Opening gifts…</p>}><GiftPanel key={`${roomId}:${giftProducts[0]?.variantId || 'cart'}`} roomId={roomId} initialProducts={giftProducts} recipient={streamer.displayName} onClose={() => setShowGifts(false)} /></Suspense>}
-      {!streamer && selfRole === 'host' && canEditProfile && !profileFormOpen && (
-        <div className="mx-5 md:mx-7 mb-4 rounded-2xl border border-slate-200 bg-white p-4">
-          <p className="mb-3 text-sm text-slate-600">Add your creator profile and a delivery address for future gifts.</p>
-          <button type="button" onClick={() => void openProfileForm()} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Set up creator profile</button>
-        </div>
-      )}
-      {profileError && <p role="alert" className="mx-5 md:mx-7 mb-3 text-sm text-rose-700">{profileError}</p>}
-      {profileFormOpen && selfRole === 'host' && (
-        <form onSubmit={saveProfile} aria-label="Creator profile" className="mx-5 md:mx-7 mb-4 rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
-          <h2 className="text-base font-semibold">Your creator profile</h2>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-sm">Display name<input required maxLength={60} value={profileDraft.displayName} onChange={e => setProfileDraft({ ...profileDraft, displayName: e.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
-            <label className="text-sm">Handle<input required maxLength={31} placeholder="@yourname" value={profileDraft.handle} onChange={e => setProfileDraft({ ...profileDraft, handle: e.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
-          </div>
-          <label className="block text-sm">Bio<textarea maxLength={500} value={profileDraft.bio} onChange={e => setProfileDraft({ ...profileDraft, bio: e.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
-          <fieldset className="space-y-3">
-            <legend className="text-sm font-semibold">Gift delivery address (optional)</legend>
-            <p className="text-xs text-slate-500">Stored on the server for gift delivery. Merchants need this address to fulfill gifts.</p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {([['recipient', recipientDetailsSupported ? 'Recipient first name' : 'Recipient name'], ...(recipientDetailsSupported ? [['lastName', 'Recipient last name'], ['phone', 'Delivery phone (with country code)']] as const : []), ['street', 'Street address'], ['city', 'City'], ['region', 'State / region'], ['postalCode', 'Postal code'], ['country', 'Country code (e.g. US)']] as const).map(([key, label]) => (
-                <label key={key} className="text-sm">{label}<input maxLength={key === 'country' ? 2 : 200} value={profileDraft.shippingAddress[key]} onChange={e => setProfileDraft({ ...profileDraft, shippingAddress: { ...profileDraft.shippingAddress, [key]: key === 'country' ? e.target.value.toUpperCase() : e.target.value } })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
-              ))}
-            </div>
-          </fieldset>
-          <label className="flex gap-2 text-sm"><input type="checkbox" checked={profileDraft.giftingEnabled} onChange={e => setProfileDraft({ ...profileDraft, giftingEnabled: e.target.checked })} />Enable product gifts to this address. I understand delivery details may appear in merchant checkout and order records.</label>
-          <div className="flex gap-3">
-            <button disabled={savingProfile} type="submit" className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{savingProfile ? 'Saving…' : 'Save profile'}</button>
-            <button disabled={savingProfile} type="button" onClick={() => { setProfileFormOpen(false); setProfileError(''); }} className="rounded-xl border border-slate-200 px-4 py-2 text-sm">Cancel</button>
-          </div>
-        </form>
-      )}
 
       {/* Inline Stream Info Editor */}
       {editingMeta && (
@@ -597,10 +483,13 @@ export function LiveStage({
           </div>
         </div>
 
-        <StreamShopChat key={roomId} isLive={isLive}
-          sources={broadcasters.filter(person => person.videoEnabled || person.screenSharing).map(person => ({ id: person.id, name: person.name }))}
-          capture={captureStreamFrame} canGift={Boolean(streamer?.giftingEnabled)}
-          onGift={product => { setGiftProducts([product]); setShowGifts(true); }} />
+        <Suspense fallback={<p className="text-sm text-slate-500">Opening shopping chat…</p>}>
+          <GiftPanel key={roomId} roomId={roomId} initialProducts={giftProducts} recipient={streamer?.displayName || 'the streamer'}
+            chat={<StreamShopChat embedded isLive={isLive}
+              sources={broadcasters.filter(person => person.videoEnabled || person.screenSharing).map(person => ({ id: person.id, name: person.name }))}
+              capture={captureStreamFrame} canGift={Boolean(streamer?.giftingEnabled)}
+              onGift={product => setGiftProducts([product])} />} />
+        </Suspense>
 
         {/* Sleek Broadcast Control Dock */}
         {selfRole !== 'viewer' ? (
@@ -775,6 +664,7 @@ export function LiveStage({
 
         {/* Creator Profile Bio / Setup cleanly positioned below the video stage & dock */}
         <CreatorProfileSection
+          onProfileChange={setStreamer}
           roomId={roomId}
           selfName={selfName}
           selfRole={selfRole}

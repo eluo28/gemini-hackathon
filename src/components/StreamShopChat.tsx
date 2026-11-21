@@ -26,7 +26,8 @@ function crop(source: HTMLCanvasElement, item: StreamObject) {
   return result;
 }
 
-export function StreamShopChat({ isLive, sources, capture, canGift, onGift }: {
+export function StreamShopChat({ isLive, sources, capture, canGift, onGift, embedded = false }: {
+  embedded?: boolean;
   isLive: boolean;
   sources: { id: string; name: string }[];
   capture: (sourceId: string) => HTMLCanvasElement;
@@ -92,8 +93,8 @@ export function StreamShopChat({ isLive, sources, capture, canGift, onGift }: {
       if (!controller.signal.aborted) { setBusy(false); setStatus(''); }
     }
   }
-  return <section aria-label="Ask about this stream" className="w-full max-w-4xl mx-auto rounded-2xl border border-violet-200 bg-white p-4 space-y-3">
-    <div><h2 className="font-semibold text-slate-950">Ask about this stream</h2><p className="mt-1 text-xs text-slate-500">“What’s that mug in the background?” We look at a snapshot only when you ask.</p></div>
+  return <section aria-label="Ask about this stream" className={embedded ? 'space-y-3' : 'w-full max-w-4xl mx-auto rounded-2xl border border-violet-200 bg-white p-4 space-y-3'}>
+    <div>{!embedded && <h2 className="font-semibold text-slate-950">Ask about this stream</h2>}<p className="mt-1 text-xs text-slate-500">“What’s that mug in the background?” We look at a snapshot only when you ask.</p></div>
     {sources.length > 1 && <label className="block text-xs text-slate-600">Look at <select aria-label="Stream to inspect" disabled={busy} value={activeSource} onChange={e => setSourceId(e.target.value)} className="ml-2 rounded-lg border p-1.5">{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>}
     {turns.map((turn, index) => <div key={index} className="space-y-2 text-sm"><p className="ml-8 rounded-xl bg-violet-50 p-3 text-violet-950">{turn.question}</p><p className="mr-8 rounded-xl bg-slate-50 p-3 text-slate-700">{turn.answer}</p></div>)}
     {error && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">{error}</p>}

@@ -8,10 +8,13 @@ interface CreatorProfileSectionProps {
   selfName: string;
   selfRole: ParticipantRole;
   hostAvatarUrl?: string;
+  onProfileChange?: (profile: StreamerProfile | null) => void;
 }
 
 const EMPTY_ADDRESS = {
   recipient: '',
+  lastName: '',
+  phone: '',
   street: '',
   city: '',
   region: '',
@@ -20,7 +23,9 @@ const EMPTY_ADDRESS = {
 };
 
 const ADDRESS_FIELDS = [
-  ['recipient', 'Recipient name'],
+  ['recipient', 'Recipient first name'],
+  ['lastName', 'Recipient last name'],
+  ['phone', 'Delivery phone (with country code)'],
   ['street', 'Street address'],
   ['city', 'City'],
   ['region', 'State / region'],
@@ -33,8 +38,11 @@ export function CreatorProfileSection({
   selfName,
   selfRole,
   hostAvatarUrl,
+  onProfileChange,
 }: CreatorProfileSectionProps) {
   const [streamer, setStreamer] = useState<StreamerProfile | null>(null);
+  const [recipientDetailsSupported, setRecipientDetailsSupported] = useState(false);
+  useEffect(() => { onProfileChange?.(streamer); }, [streamer, onProfileChange]);
   const [canEditProfile, setCanEditProfile] = useState(false);
   const [profileFormOpen, setProfileFormOpen] = useState(false);
   const [profileError, setProfileError] = useState('');
@@ -43,6 +51,7 @@ export function CreatorProfileSection({
     displayName: '',
     handle: '',
     bio: '',
+    giftingEnabled: false,
     shippingAddress: { ...EMPTY_ADDRESS },
   });
 
@@ -58,6 +67,7 @@ export function CreatorProfileSection({
         const data: RoomStreamerResponse = await response.json();
         if (!controller.signal.aborted) {
           setStreamer(data.streamer);
+          setRecipientDetailsSupported(data.recipientDetailsSupported === true);
           setCanEditProfile(data.canEdit);
         }
       })
@@ -85,6 +95,7 @@ export function CreatorProfileSection({
       displayName: streamer?.displayName || selfName,
       handle: streamer?.handle || '',
       bio: streamer?.bio || '',
+      giftingEnabled: streamer?.giftingEnabled || false,
       shippingAddress: { ...EMPTY_ADDRESS },
     });
     if (streamer) {
@@ -94,7 +105,7 @@ export function CreatorProfileSection({
         const data = await response.json();
         setProfileDraft((draft) => ({
           ...draft,
-          shippingAddress: data.shippingAddress || { ...EMPTY_ADDRESS },
+          shippingAddress: { ...EMPTY_ADDRESS, ...data.shippingAddress },
         }));
       } catch {
         setProfileError('Could not load your profile settings. Try again.');
@@ -314,7 +325,7 @@ export function CreatorProfileSection({
                   Stored privately on the server and never exposed in public room responses.
                 </p>
                 <div className="grid gap-2.5 sm:grid-cols-2">
-                  {ADDRESS_FIELDS.map(([key, label]) => (
+                  {ADDRESS_FIELDS.filter(([key]) => recipientDetailsSupported || (key !== 'lastName' && key !== 'phone')).map(([key, label]) => (
                     <label key={key} className="block text-xs font-medium text-slate-600">
                       {label}
                       <input
@@ -337,6 +348,7 @@ export function CreatorProfileSection({
                 </div>
               </fieldset>
 
+              <label className="flex gap-2 text-xs text-slate-600"><input type="checkbox" checked={profileDraft.giftingEnabled} onChange={e => setProfileDraft({ ...profileDraft, giftingEnabled: e.target.checked })} />Enable product gifts to this address. Delivery details may appear in merchant checkout and order records.</label>
               <div className="pt-2 flex items-center justify-end gap-2">
                 <button
                   disabled={savingProfile}

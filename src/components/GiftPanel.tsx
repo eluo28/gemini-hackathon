@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { GiftMessage, GiftProduct, GiftView, ShopConnection } from '../shared/gifting';
 
 import { formatMoney as giftMoney } from '../utils/money';
@@ -16,7 +16,10 @@ function Notices({ messages }: { messages: GiftMessage[] }) {
   </div>)}</>;
 }
 
-export function GiftPanel({ roomId, recipient, initialProducts = [], onClose }: { roomId: string; recipient: string; initialProducts?: GiftProduct[]; onClose: () => void }) {
+const EMPTY_PRODUCTS: GiftProduct[] = [];
+
+export function GiftPanel({ roomId, recipient, initialProducts = EMPTY_PRODUCTS, chat, onClose }: { roomId: string; recipient: string; initialProducts?: GiftProduct[]; chat?: ReactNode; onClose?: () => void }) {
+  const [cartOpen, setCartOpen] = useState(!chat);
   const [state, setState] = useState<GiftView | null>(null);
   const [products, setProducts] = useState<GiftProduct[]>(initialProducts);
   const [searchNotices, setSearchNotices] = useState<GiftMessage[]>([]);
@@ -49,11 +52,15 @@ export function GiftPanel({ roomId, recipient, initialProducts = [], onClose }: 
   useEffect(() => {
     mounted.current = true;
     openerRef.current = document.activeElement as HTMLElement;
-    panelRef.current?.focus();
+    if (!chat) panelRef.current?.focus();
     const controller = new AbortController();
-    void api<GiftView>('/session', {}, controller.signal).then(view => { if (mounted.current) setState(view); }).catch(e => { if (!controller.signal.aborted) setError(e.message); });
+    void api<GiftView>('/session', {}, controller.signal).then(view => { if (mounted.current) { setState(view); if (view.cart) setCartOpen(true); } }).catch(e => { if (!controller.signal.aborted) setError(e.message); });
     return () => { mounted.current = false; controller.abort(); openerRef.current?.focus(); };
   }, []);
+  useEffect(() => {
+    setProducts(initialProducts);
+    if (initialProducts.length) setCartOpen(true);
+  }, [initialProducts]);
   useEffect(() => { setInstrument(''); setConfirmed(false); }, [state?.checkout?.reviewId]);
   useEffect(() => {
     if (!connection) return;
@@ -92,14 +99,15 @@ export function GiftPanel({ roomId, recipient, initialProducts = [], onClose }: 
     };
   }, [connection]);
 
-  const update = (path: string, body: unknown = {}) => run(async () => { const view = await api<GiftView>(path, body); if (mounted.current) setState(view); });
+  const update = (path: string, body: unknown = {}) => run(async () => { const view = await api<GiftView>(path, body); if (mounted.current) { setState(view); if (view.cart) setCartOpen(true); } });
   const checkout = state?.checkout;
   const hosted = handoffOpened || Boolean(checkout?.handoffOpened);
   const lockCart = busy || Boolean(checkout) || Boolean(state?.uncertainWrite);
-  return <section ref={panelRef} tabIndex={-1} aria-label={`Gift to ${recipient}`} className="mx-5 md:mx-7 mb-5 rounded-2xl border border-violet-200 bg-white p-5 shadow-sm outline-none space-y-4">
+  const cartCount = state?.cart?.lines.reduce((sum, line) => sum + line.quantity, 0) || 0;
+  return <section ref={panelRef} tabIndex={-1} aria-label={chat ? 'Shop this stream' : `Gift to ${recipient}`} className={`${chat ? 'w-full max-w-4xl mx-auto' : 'mx-5 md:mx-7 mb-5'} rounded-2xl border border-violet-200 bg-white p-5 shadow-sm outline-none space-y-4`}>
     <div className="flex flex-wrap justify-between items-center gap-3">
-      <div><h2 className="font-semibold text-lg">Gift to {recipient}</h2><p className="text-sm text-slate-500">Choose a product. Review delivery and payment before buying.</p></div>
-      <button type="button" onClick={onClose} className="rounded-lg border px-3 py-2 text-sm">Close gifts</button>
+      <div><h2 className="font-semibold text-lg">{chat ? 'Shop this stream' : `Gift to ${recipient}`}</h2><p className="text-sm text-slate-500">{chat ? 'Ask about what you see, find a product, and send a gift.' : 'Choose a product. Review delivery and payment before buying.'}</p></div>
+      {chat ? <button type="button" aria-expanded={cartOpen} aria-controls="stream-gift-cart" onClick={() => setCartOpen(open => !open)} className="rounded-lg border px-3 py-2 text-sm">{cartOpen ? 'Hide cart' : 'Cart'} ({cartCount})</button> : onClose ? <button type="button" onClick={onClose} className="rounded-lg border px-3 py-2 text-sm">Close gifts</button> : null}
     </div>
     {state?.simulated && <p role="status" className="rounded-lg border-2 border-amber-400 bg-amber-50 p-3 font-semibold text-amber-950">LOCAL DEMO — simulated products, sign-in, and orders. No payment or delivery occurs.</p>}
     {error && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{error}</p>}
@@ -117,9 +125,11 @@ export function GiftPanel({ roomId, recipient, initialProducts = [], onClose }: 
         <a href={connection.url} target="_blank" rel="noreferrer" className="font-semibold underline">Sign in and approve on Shop</a>
         <p>Code: <strong>{connection.code}</strong>. Waiting for your approval…</p>
       </div>}
+      {chat}
+      <div id="stream-gift-cart" hidden={!cartOpen} className="space-y-4 border-t border-slate-100 pt-4">
       {!checkout && <>
         <Notices messages={searchNotices} />
-        {!products.length && <p className="text-sm text-slate-500">Ask about an object in the live stream, then choose “Gift this item” from its product matches.</p>}
+        {!products.length && <p className="text-sm text-slate-500">Your gift cart is empty. Ask about something in the stream and choose a product below its answer.</p>}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{products.map(product => <article key={product.id} className="rounded-xl border border-slate-200 p-3 space-y-2">
           {product.image && <img src={product.image} alt={product.title} loading="lazy" className="h-32 w-full object-contain" />}
           <h3 className="text-sm font-semibold">{product.title}</h3><p className="text-xs text-slate-500">{product.seller}</p>
@@ -179,6 +189,7 @@ export function GiftPanel({ roomId, recipient, initialProducts = [], onClose }: 
         <button disabled={busy || state.uncertainWrite || Boolean(checkout?.completionAttempted && !checkout.orderConfirmed) || hosted && !checkout?.orderConfirmed} onClick={() => void run(async () => { setState(await api<GiftView>('/clear', {})); setHandoffOpened(false); })} className="underline disabled:opacity-40">{checkout?.orderConfirmed ? 'Start another gift' : 'Clear gift cart'}</button>
       </div>}
       {state.uncertainWrite && <p role="alert" className="text-sm text-amber-900">The previous request has an uncertain outcome. Refresh status before trying anything else.</p>}
+      </div>
     </>}
     {busy && <p role="status" className="text-sm text-slate-500">Working with {state?.simulated ? 'local demo' : 'Shop'}…</p>}
   </section>;
