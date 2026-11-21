@@ -1,3 +1,4 @@
+import { SOUNDBOARD_SOUNDS } from './src/services/soundboard';
 import { clipEvent, clipTelemetryFile } from './src/server/clipTelemetry';
 import { createStreamMatchRouter } from './src/server/streamMatchRoutes';
 import { createGiftingService } from './src/server/gifting';
@@ -552,7 +553,15 @@ async function startServer() {
 
         if (!currentRoom || !participantId) return;
 
-        if (msg.type === 'participant:media-state') {
+        if (msg.type === 'soundboard:play') {
+          if (!currentRoom.isLive || !currentRoom.participants.has(participantId)) return;
+          if (!SOUNDBOARD_SOUNDS.some(sound => sound.id === msg.sound) ||
+              !Number.isFinite(msg.volume) || msg.volume < 0 || msg.volume > 1) return;
+          const broadcasters = [...currentRoom.participants.values()].filter(p => p.info.role !== 'viewer');
+          const broadcaster = broadcasters.find(p => p.info.role === 'host') || broadcasters[0];
+          // One mixer sends the effect to every listener, including the requesting viewer.
+          if (broadcaster) sendToSocket(broadcaster.ws, { type: 'soundboard:play', sound: msg.sound, volume: msg.volume });
+        } else if (msg.type === 'participant:media-state') {
           const entry = currentRoom.participants.get(participantId);
           if (!entry) return;
           if (typeof msg.audioEnabled === 'boolean') entry.info.audioEnabled = msg.audioEnabled;

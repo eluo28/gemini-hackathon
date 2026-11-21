@@ -1,3 +1,4 @@
+import type { SoundboardSound } from '../services/soundboard';
 import type { GiftAlert } from './gifting';
 import type {
   ChatMessage,
@@ -52,6 +53,7 @@ export interface ClipSinkAdapter {
  * Strict discriminated union for Client -> Server WebSocket frames.
  */
 export type ClientWsMessage =
+  | { type: 'soundboard:play'; sound: SoundboardSound; volume: number }
   | { type: 'ping' }
   | {
       type: 'room:join';
@@ -95,6 +97,7 @@ export type ClientWsMessage =
  */
 export type ServerWsMessage =
   | { type: 'gift:confirmed'; gift: GiftAlert }
+  | { type: 'soundboard:play'; sound: SoundboardSound; volume: number }
   | { type: 'pong'; ts: number }
   | { type: 'room:joined'; selfId: string; state: RoomStatePayload }
   | { type: 'participant:joined'; participant: RoomParticipant }

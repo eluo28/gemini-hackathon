@@ -7,7 +7,7 @@ interface Props {
   playing: SoundboardSound | null;
   error: string;
   onPlay: (sound: SoundboardSound, volume: number) => void;
-  onStop: () => void;
+  onStop?: () => void;
   onClose: () => void;
 }
 
@@ -34,9 +34,9 @@ export function Soundboard({ enabled, playing, error, onPlay, onStop, onClose }:
         <input aria-label="Soundboard volume" type="range" min="10" max="100" step="5" value={Math.round(volume * 100)} onChange={e => setVolume(Number(e.target.value) / 100)} className="w-24 accent-rose-600" />
         <span className="font-mono w-8">{Math.round(volume * 100)}%</span>
       </label>
-      <button type="button" onClick={onStop} disabled={!playing} className="flex items-center gap-1.5 text-xs font-medium text-slate-600 disabled:opacity-40"><Square className="w-3 h-3" />Stop sound</button>
+      {onStop && <button type="button" onClick={onStop} disabled={!playing} className="flex items-center gap-1.5 text-xs font-medium text-slate-600 disabled:opacity-40"><Square className="w-3 h-3" />Stop sound</button>}
     </div>
-    <p role="status" className="text-xs text-slate-500">{!enabled ? 'Go live to use the soundboard.' : playing ? 'Playing to your stream. Tap any sound to play again immediately.' : 'Ready. Play sounds as often as you like.'}</p>
+    <p role="status" className="text-xs text-slate-500">{!enabled ? 'Soundboard is available when the stream is live.' : playing ? 'Playing to your stream. Tap any sound to play again immediately.' : 'Ready. Play sounds as often as you like.'}</p>
     {error && <p role="alert" className="text-xs text-rose-700">{error}</p>}
   </section>;
 }

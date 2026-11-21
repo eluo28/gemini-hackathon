@@ -264,6 +264,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const soundboardSequence = useRef(0);
   const [soundboardPlaying, setSoundboardPlaying] = useState<SoundboardSound | null>(null);
   const [soundboardError, setSoundboardError] = useState('');
+  const [soundboardCompleted, setSoundboardCompleted] = useState(0);
   const stopSoundboard = useCallback(() => {
     soundboardSequence.current++;
     soundboardRef.current?.stop();
@@ -647,7 +648,15 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   );
 
   const playSoundboard = useCallback(async (sound: SoundboardSound, volume: number) => {
-    if (!localStreamRef.current || profileRef.current.role === 'viewer') return false;
+    if (profileRef.current.role === 'viewer') {
+      const ws = wsRef.current;
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'soundboard:play', sound, volume } satisfies ClientWsMessage));
+        setSoundboardError('');
+      } else setSoundboardError('Reconnect to the stream to play a sound.');
+      return false;
+    }
+    if (!localStreamRef.current) return false;
     const token = ++soundboardSequence.current;
     setSoundboardPlaying(sound); setSoundboardError('');
     try {
@@ -661,6 +670,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
       if (import.meta.env.DEV) console.debug('[clipping]', { event: 'soundboard.started', sound, volume });
       const completed = await soundboardRef.current.play(sound, volume);
       if (import.meta.env.DEV) console.debug('[clipping]', { event: completed ? 'soundboard.completed' : 'soundboard.stopped', sound });
+      if (completed && token === soundboardSequence.current) setSoundboardCompleted(value => value + 1);
       return completed && token === soundboardSequence.current;
     } catch (error) {
       if (token === soundboardSequence.current) setSoundboardError(error instanceof Error ? error.message : 'Could not play this sound.');
@@ -669,6 +679,9 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
       if (token === soundboardSequence.current) setSoundboardPlaying(null);
     }
   }, [syncTracksToPeers]);
+
+  const playSoundboardRef = useRef(playSoundboard);
+  playSoundboardRef.current = playSoundboard;
 
   useEffect(() => { if (!isLive) stopSoundboard(); }, [isLive, stopSoundboard]);
 
@@ -1446,6 +1459,8 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
               setLastClipMarker(null);
     setLastGift(null);
             }, 6000);
+          } else if (msg.type === 'soundboard:play') {
+            if (profileRef.current.role !== 'viewer') void playSoundboardRef.current(msg.sound, msg.volume);
           } else if (msg.type === 'gift:confirmed') {
             if (msg.gift.roomId === roomIdRef.current) setLastGift(msg.gift);
           } else if (msg.type === 'room:meta-updated') {
@@ -1949,7 +1964,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   );
 
   return {
-    soundboardPlaying, soundboardError, playSoundboard, stopSoundboard,
+    soundboardPlaying, soundboardError, soundboardCompleted, playSoundboard, stopSoundboard,
     hasJoined,
     selfAvatar,
     roomId,

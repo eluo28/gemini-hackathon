@@ -56,6 +56,12 @@ export default function App() {
 function StudioApp() {
   const studio = useStudioRoom(getInitialRoomFromUrl());
   const clipper = useAutoClipper({ soundboardPlaying: !!studio.soundboardPlaying, active: studio.hasJoined && studio.isLive && studio.selfRole !== 'viewer', roomId: studio.roomId, localStream: studio.localStream, remoteStreams: studio.remoteStreams, remoteRelayFrames: studio.remoteRelayFrames, subscribeRelayAudio: studio.subscribeRelayAudio, participants: studio.participants, selfId: studio.selfId, selfName: studio.selfName, messages: studio.chatMessages });
+  const lastSoundboardCompletion = useRef(studio.soundboardCompleted);
+  useEffect(() => {
+    if (lastSoundboardCompletion.current === studio.soundboardCompleted) return;
+    lastSoundboardCompletion.current = studio.soundboardCompleted;
+    clipper.detectSoundboard();
+  }, [studio.soundboardCompleted, clipper.detectSoundboard]);
   const [showMyClips, setShowMyClips] = useState(new URLSearchParams(window.location.search).get('view') === 'clips');
   const [showRoomSwitcher, setShowRoomSwitcher] = useState(false);
   const [theaterMode, setTheaterMode] = useState(false);
@@ -186,9 +192,7 @@ function StudioApp() {
           soundboardEnabled={studio.isLive}
           soundboardPlaying={studio.soundboardPlaying}
           soundboardError={studio.soundboardError}
-          onPlaySoundboard={async (sound, volume) => {
-            if (await studio.playSoundboard(sound, volume)) clipper.detectSoundboard();
-          }}
+          onPlaySoundboard={studio.playSoundboard}
           onStopSoundboard={studio.stopSoundboard}
           captureRef={captureRef}
           onProfileChange={setStreamer}

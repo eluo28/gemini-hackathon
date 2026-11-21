@@ -648,6 +648,12 @@ export function LiveStage({
           <div
             className={`${singleStageMaxWidth} mx-auto w-full bg-white border border-slate-200/90 rounded-2xl px-4 py-3 shadow-xs flex flex-wrap items-center justify-between gap-3`}
           >
+            <button type="button" onClick={() => setShowSoundboard(v => !v)} aria-expanded={showSoundboard} aria-controls="stream-soundboard"
+              className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-xl border border-slate-200">
+              <AudioLines className="w-4 h-4" aria-hidden="true" />Soundboard
+            </button>
+            {showSoundboard && <div className="w-full"><Soundboard enabled={soundboardEnabled} playing={null} error={soundboardError}
+              onPlay={onPlaySoundboard} onClose={() => setShowSoundboard(false)} /></div>}
             <p className="text-xs text-slate-600">
               {isLive
                 ? 'Watching live. Chat on the right or step onto the stage anytime.'
