@@ -5,7 +5,7 @@ import type { StreamerProfile } from '../shared/protocol';
 
 const dataDir = path.resolve(process.env.PROFILE_DATA_DIR || '.data');
 const dataFile = path.join(dataDir, 'streamers.json');
-const addressFields = ['recipient', 'street', 'city', 'region', 'postalCode', 'country'] as const;
+const addressFields = ['recipient', 'lastName', 'phone', 'street', 'city', 'region', 'postalCode', 'country'] as const;
 type ShippingAddress = Record<(typeof addressFields)[number], string>;
 interface StoredProfile {
   owner: string;
@@ -38,17 +38,18 @@ export function saveStreamer(roomId: string, owner: string, input: unknown): Str
       if (!address.recipient || !address.street || !address.city || !address.postalCode || !/^[A-Z]{2}$/.test(address.country)) {
         throw new Error('Complete the delivery address and use a two-letter country code, such as US.');
       }
+      if (address.phone && !/^\+[1-9]\d{7,14}$/.test(address.phone)) throw new Error('Enter a delivery phone number with country code, such as +12025550123.');
       shippingAddress = address;
     }
   }
+  if (value.giftingEnabled === true && !shippingAddress) throw new Error('Complete the delivery address before enabling gifts.');
   const existing = getStreamer(roomId);
   const profile: StreamerProfile = {
     id: existing?.profile.id || `creator_${crypto.randomUUID()}`,
     roomId, displayName, handle: `@${handle}`, bio: text(value.bio, 500),
     initials: displayName.split(/\s+/).slice(0, 2).map(word => word[0]).join('').toUpperCase(),
-    giftingEnabled: false,
+    giftingEnabled: value.giftingEnabled === true && shippingAddress !== null,
     hasShippingAddress: shippingAddress !== null,
-    wishlist: existing?.profile.wishlist || [],
   };
   const entry = { owner, profile, shippingAddress };
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });

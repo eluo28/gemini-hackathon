@@ -1,4 +1,8 @@
-import { useEffect, useState } from 'react';
+import { StreamShopChat, type ShopChatHandle } from './components/StreamShopChat';
+import type { StreamCaptureHandle } from './components/LiveStage';
+import type { StreamerProfile } from './shared/protocol';
+const GiftPanel = lazy(() => import('./components/GiftPanel').then(module => ({ default: module.GiftPanel })));
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { AutoClipper, LiveClipsPanel, MyClipsPage } from './components/AutoClipper';
 import { ClipGenPage } from './components/ClipGenPage';
 import { Viewer3DPage } from './components/Viewer3DPage';
@@ -53,6 +57,25 @@ function StudioApp() {
   const [showMyClips, setShowMyClips] = useState(new URLSearchParams(window.location.search).get('view') === 'clips');
   const [showRoomSwitcher, setShowRoomSwitcher] = useState(false);
   const [theaterMode, setTheaterMode] = useState(false);
+  const captureRef = useRef<StreamCaptureHandle>(null);
+  const shopRef = useRef<ShopChatHandle>(null);
+  const [streamer, setStreamer] = useState<StreamerProfile | null>(null);
+  const [shopConnected, setShopConnected] = useState(false);
+  const [excludedShopDomains, setExcludedShopDomains] = useState<string[]>(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem('shop-merchant-checkout-exclusions') || '[]');
+      return Array.isArray(saved) ? saved.filter((shop): shop is string => typeof shop === 'string' && /^[a-z0-9.-]+$/.test(shop)).slice(-100) : [];
+    } catch { return []; }
+  });
+  const excludeMerchantCheckout = useCallback((shop: string) => {
+    setExcludedShopDomains(previous => previous.includes(shop) ? previous : [...previous, shop].slice(-100));
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('shop-merchant-checkout-exclusions', JSON.stringify(excludedShopDomains)); } catch { /* In-memory filtering still applies. */ }
+  }, [excludedShopDomains]);
+  const [shopBusy, setShopBusy] = useState(false);
+  useEffect(() => { setShopBusy(false); }, [studio.roomId]);
+  const currentStreamer = streamer?.roomId === studio.roomId ? streamer : null;
   const [copiedInvite, setCopiedInvite] = useState(false);
 
   useEffect(() => {
@@ -162,6 +185,8 @@ function StudioApp() {
 
       <main className="flex-1 min-h-0 flex flex-col lg:flex-row lg:overflow-hidden">
         <LiveStage
+          captureRef={captureRef}
+          onProfileChange={setStreamer}
           roomId={studio.roomId}
           roomTitle={studio.roomTitle}
           roomCategory={studio.roomCategory}
@@ -169,6 +194,7 @@ function StudioApp() {
           streamStartedAt={studio.streamStartedAt}
           isAutoRecording={clipper.recording}
           lastClipMarker={studio.lastClipMarker}
+          lastGift={studio.lastGift}
           streamEndedNotice={studio.streamEndedNotice}
           audioBlocked={studio.audioBlocked}
           audioUnlockSeq={studio.audioUnlockSeq}
@@ -180,6 +206,7 @@ function StudioApp() {
           directoryRooms={studio.directoryRooms}
           recentRooms={studio.recentRooms}
           localStream={studio.localStream}
+          usingSyntheticFeed={studio.usingSyntheticFeed}
           remoteStreams={studio.remoteStreams}
           remoteRelayFrames={studio.remoteRelayFrames}
           peerConnectionStates={studio.peerConnectionStates}
@@ -219,6 +246,18 @@ function StudioApp() {
 
         {!theaterMode && (
           <LiveChatPanel
+            key={studio.roomId}
+            shopAvailable={studio.isLive && studio.participants.some(p => p.role !== 'viewer' && (p.videoEnabled || p.screenSharing))}
+            shopBusy={shopBusy}
+            shopConnected={shopConnected}
+            onShopQuestion={question => shopRef.current?.ask(question)}
+            shoppingPanel={<Suspense fallback={<p className="p-3 text-xs">Opening Shop…</p>}>
+              <GiftPanel compact onMerchantCheckoutRequired={excludeMerchantCheckout} onConnectionChange={setShopConnected} roomId={studio.roomId} recipient={currentStreamer?.displayName || 'the streamer'}
+                chat={({ add, busy: purchaseBusy, pending: pendingPurchase, blockedReason, reviewCart }) => <StreamShopChat excludedShopDomains={excludedShopDomains} purchaseBlockReason={blockedReason} onReviewCart={reviewCart} pendingPurchase={pendingPurchase} purchaseBusy={purchaseBusy} compact embedded controllerRef={shopRef} onBusyChange={setShopBusy} isLive={studio.isLive}
+                  sources={studio.participants.filter(p => p.role !== 'viewer' && (p.videoEnabled || p.screenSharing)).map(p => ({ id: p.id, name: p.name }))}
+                  capture={sourceId => { if (!captureRef.current) throw new Error('The stream is still connecting.'); return captureRef.current.capture(sourceId); }}
+                  canGift={Boolean(currentStreamer?.giftingEnabled)} onGift={product => add(product, 'gift')} onBuy={product => add(product, 'self')} />} />
+            </Suspense>}
             clipsPanel={studio.selfRole !== 'viewer' ? <LiveClipsPanel clipper={clipper} enabled={studio.isLive} /> : undefined}
             clipCount={clipper.queue.length}
             messages={studio.chatMessages}

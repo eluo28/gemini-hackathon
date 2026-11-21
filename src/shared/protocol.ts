@@ -1,3 +1,4 @@
+import type { GiftAlert } from './gifting';
 import type {
   ChatMessage,
   ClipMarkerEvent,
@@ -93,6 +94,7 @@ export type ClientWsMessage =
  * Strict discriminated union for Server -> Client WebSocket frames.
  */
 export type ServerWsMessage =
+  | { type: 'gift:confirmed'; gift: GiftAlert }
   | { type: 'pong'; ts: number }
   | { type: 'room:joined'; selfId: string; state: RoomStatePayload }
   | { type: 'participant:joined'; participant: RoomParticipant }
@@ -128,11 +130,10 @@ export interface StreamerProfile {
   initials: string;
   hasShippingAddress: boolean;
   giftingEnabled: boolean;
-  /** Exact product selections will be added after Shop catalog verification. */
-  wishlist: { productId: string; variantId: string; shop: string }[];
 }
 
 export interface RoomStreamerResponse {
+  recipientDetailsSupported?: boolean;
   streamer: StreamerProfile | null;
   canEdit: boolean;
 }

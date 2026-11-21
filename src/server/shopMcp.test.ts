@@ -40,6 +40,7 @@ test('HTTP, JSON-RPC, tool, malformed response, network and timeout failures are
     [async () => Response.json({ result: { isError: true, content: [{ text: 'private detail' }] } }), 'shop_tool_error'],
     [async () => new Response('not json'), 'shop_invalid_response'],
     [async () => success([]), 'shop_invalid_response'],
+    [async () => Response.json({ result: { isError: true, content: [{ type: 'text', text: `Shopify Catalog: 'context.address_country' is not a recognized country code: \"AS\".` }] } }), 'shop_invalid_country'],
     [async () => { throw new Error('private network detail'); }, 'shop_unavailable'],
     [async () => { throw new DOMException('private timeout detail', 'TimeoutError'); }, 'shop_timeout'],
   ];

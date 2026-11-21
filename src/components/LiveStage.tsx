@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react';
+import type { StreamerProfile } from '../shared/protocol';
+import type { GiftAlert } from '../shared/gifting';
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import {
   Mic,
   MicOff,
@@ -32,7 +34,11 @@ import { RoomSwitcherDrawer } from './RoomSwitcherDrawer';
 import { ParticipantVideoTile } from './VideoTile';
 import type { PeerRtcState } from '../utils/videoPlayback';
 
+export interface StreamCaptureHandle { capture: (sourceId: string) => HTMLCanvasElement }
+
 interface LiveStageProps {
+  captureRef?: Ref<StreamCaptureHandle>;
+  onProfileChange?: (profile: StreamerProfile | null) => void;
   roomId: string;
   roomTitle: string;
   roomCategory: StreamCategory;
@@ -40,6 +46,7 @@ interface LiveStageProps {
   streamStartedAt: number | null;
   isAutoRecording: boolean;
   lastClipMarker: ClipMarkerEvent | null;
+  lastGift: GiftAlert | null;
   streamEndedNotice: string | null;
   audioBlocked: boolean;
   audioUnlockSeq: number;
@@ -51,6 +58,7 @@ interface LiveStageProps {
   directoryRooms: RoomSummary[];
   recentRooms: RecentRoomEntry[];
   localStream: MediaStream | null;
+  usingSyntheticFeed: boolean;
   remoteStreams: Record<string, MediaStream>;
   remoteRelayFrames: Record<string, string>;
   peerConnectionStates: Record<string, PeerRtcState>;
@@ -89,6 +97,8 @@ interface LiveStageProps {
 }
 
 export function LiveStage({
+  captureRef,
+  onProfileChange,
   roomId,
   roomTitle,
   roomCategory,
@@ -96,6 +106,7 @@ export function LiveStage({
   streamStartedAt,
   isAutoRecording,
   lastClipMarker,
+  lastGift,
   streamEndedNotice,
   audioBlocked,
   audioUnlockSeq,
@@ -107,6 +118,7 @@ export function LiveStage({
   directoryRooms,
   recentRooms,
   localStream,
+  usingSyntheticFeed,
   remoteStreams,
   remoteRelayFrames,
   peerConnectionStates,
@@ -139,6 +151,7 @@ export function LiveStage({
   onReportAudioBlocked,
   onTriggerClipMark,
 }: LiveStageProps) {
+  const stageGridRef = useRef<HTMLDivElement>(null);
   const [editingMeta, setEditingMeta] = useState(false);
   const [showDevices, setShowDevices] = useState(false);
   const [titleDraft, setTitleDraft] = useState(roomTitle);
@@ -171,7 +184,28 @@ export function LiveStage({
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+  function captureStreamFrame(sourceId: string): HTMLCanvasElement {
+    if (!isLive) throw new Error('The stream needs to be live before you can ask about an object.');
+    const participant = broadcasters.find(person => person.id === sourceId);
+    if (!participant || (!participant.videoEnabled && !participant.screenSharing)) throw new Error('Choose a stream with an active camera or screen share.');
+    if (sourceId === selfId && usingSyntheticFeed && !screenSharing) throw new Error('The standby camera is not a real video feed. Turn on a camera or share a screen containing the object.');
+    const tile = Array.from(stageGridRef.current?.querySelectorAll<HTMLElement>('[data-participant-id]') || []).find(element => element.dataset.participantId === sourceId);
+    const video = tile?.querySelector('video');
+    const relay = tile?.querySelector<HTMLImageElement>('img[data-live-relay]');
+    const source = video && video.readyState >= 2 && video.videoWidth > 0 && !video.classList.contains('hidden') ? video : relay && relay.complete && relay.naturalWidth > 0 ? relay : null;
+    if (!source) throw new Error('The live video is still connecting. Wait for a clear frame, then ask again.');
+    const width = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+    const height = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
+    const scale = Math.min(1, 960 / width, 540 / height);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale)); canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Your browser cannot capture this stream.');
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
 
+  useImperativeHandle(captureRef, () => ({ capture: captureStreamFrame }));
   const { broadcasters, viewers } = partitionParticipants(participants);
   const hostParticipant =
     broadcasters.find((p) => p.role === 'host') || broadcasters[0] || undefined;
@@ -269,6 +303,8 @@ export function LiveStage({
           )}
         </button>
       </div>
+
+      {lastGift && lastGift.roomId === roomId && <div role="status" className="mx-5 md:mx-7 mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">{lastGift.simulated ? 'Demo gift confirmed for ' : 'A viewer sent a gift to '}{lastGift.recipient}!</div>}
 
       {/* Inline Stream Info Editor */}
       {editingMeta && (
@@ -404,7 +440,7 @@ export function LiveStage({
       {/* Main Video Stage + Sleek Control Dock + Creator Bio Below Fold */}
       <div className="px-5 md:px-7 pb-6 flex-1 flex flex-col gap-4">
         <div className="flex-1 flex items-center">
-          <div className={`grid gap-4 ${gridColsClass}`} data-testid="stage-video-grid">
+          <div ref={stageGridRef} className={`grid gap-4 ${gridColsClass}`} data-testid="stage-video-grid">
             {broadcasters.length === 0 ? (
               <div className="relative aspect-video rounded-2xl overflow-hidden bg-white border border-slate-200/90 shadow-xs flex items-center justify-center p-8 text-center">
                 <div className="max-w-sm space-y-1.5">
@@ -615,6 +651,7 @@ export function LiveStage({
 
         {/* Creator Profile Bio / Setup cleanly positioned below the video stage & dock */}
         <CreatorProfileSection
+          onProfileChange={onProfileChange}
           roomId={roomId}
           selfName={selfName}
           selfRole={selfRole}

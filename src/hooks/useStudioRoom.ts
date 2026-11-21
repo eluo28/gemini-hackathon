@@ -1,3 +1,4 @@
+import type { GiftAlert } from '../shared/gifting';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ANIMAL_AVATARS,
@@ -208,6 +209,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const [selfRole, setSelfRole] = useState<ParticipantRole>(initialContext.current.profile.role);
   const [isLive, setIsLive] = useState(false);
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
+  const [lastGift, setLastGift] = useState<GiftAlert | null>(null);
   const [lastClipMarker, setLastClipMarker] = useState<ClipMarkerEvent | null>(null);
   const [streamEndedNotice, setStreamEndedNotice] = useState<string | null>(null);
   const [participants, setParticipants] = useState<RoomParticipant[]>([]);
@@ -1380,7 +1382,10 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
             }
             clipBannerTimerRef.current = window.setTimeout(() => {
               setLastClipMarker(null);
+    setLastGift(null);
             }, 6000);
+          } else if (msg.type === 'gift:confirmed') {
+            if (msg.gift.roomId === roomIdRef.current) setLastGift(msg.gift);
           } else if (msg.type === 'room:meta-updated') {
             setRoomTitle(msg.title);
             setRoomCategory(msg.category);
@@ -1805,6 +1810,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     setStreamEndedNotice(null);
     setMediaNotice(null);
     setLastClipMarker(null);
+    setLastGift(null);
     setParticipants([]);
     setChatMessages([]);
     hasJoinedRef.current = false;
@@ -1870,6 +1876,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     isLive,
     streamStartedAt,
     lastClipMarker,
+    lastGift,
     streamEndedNotice,
     participants,
     chatMessages,

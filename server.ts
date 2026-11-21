@@ -1,4 +1,9 @@
 import { clipEvent, clipTelemetryFile } from './src/server/clipTelemetry';
+import { createStreamMatchRouter } from './src/server/streamMatchRoutes';
+import { createGiftingService } from './src/server/gifting';
+import { createGiftingRouter } from './src/server/giftingRoutes';
+import { createDemoGiftingService } from './src/server/giftingDemo';
+import type { GiftAlert } from './src/shared/gifting';
 import { requireProfileOrigin } from './src/server/profileOrigin';
 import dotenv from 'dotenv';
 dotenv.config({ path: ['.env.local', '.env'] });
@@ -228,8 +233,20 @@ async function startServer() {
   app.use('/api/clips', createClipRouter());
   app.use('/api/shop', createItemDetectionRouter());
   app.use('/api/clip-gen', createClipGenRouter());
+  app.use('/api/shop', createStreamMatchRouter());
   app.use(express.json({ limit: '256kb' }));
   app.use('/api/shop', createShopRouter());
+  const onGiftConfirmed = (alert: GiftAlert) => {
+    const room = rooms.get(alert.roomId);
+    if (room) broadcastToRoom(room, { type: 'gift:confirmed', gift: alert });
+  };
+  if (process.env.GIFTING_DEMO_MODE === 'true' && process.env.NODE_ENV === 'production') {
+    throw new Error('GIFTING_DEMO_MODE is local-only. Disable it for production.');
+  }
+  const gifting = process.env.GIFTING_DEMO_MODE === 'true'
+    ? createDemoGiftingService(onGiftConfirmed)
+    : createGiftingService({ confirmed: onGiftConfirmed });
+  app.use('/api/gifting', createGiftingRouter(gifting));
 
   const defaultIceServers = [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -296,6 +313,7 @@ async function startServer() {
     res.setHeader('Cache-Control', 'no-store');
     const entry = getStreamer(req.params.roomId);
     const payload: RoomStreamerResponse = {
+      recipientDetailsSupported: true,
       streamer: entry?.profile || null,
       canEdit: !entry || entry.owner === profileOwner(req),
     };

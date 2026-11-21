@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { createItemDetector, ItemDetectionError, parseItemFrames, type ItemFrame } from './itemDetection';
+import { createStreamMatchRouter } from './streamMatchRoutes';
 import { createItemDetectionRouter } from './itemDetectionRoutes';
 
 const frame: ItemFrame = { mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5uoAAAAASUVORK5CYII=', timestampSec: 12.5 };
@@ -24,9 +25,10 @@ test('Gemini request contains image bytes and schema; response uses caller times
     assert.ok(request.config?.responseJsonSchema);
     assert.match(String(request.config?.systemInstruction), /untrusted scene data/);
     assert.match(JSON.stringify(request.contents), /inlineData/);
+    assert.match(JSON.stringify(request.contents), /mug in the background/);
     return { text: JSON.stringify({ items: [{ ...item, timestampSec: 999, productId: 'invented', price: 1 }] }) };
   } });
-  const result = await detect([frame]);
+  const result = await detect([frame], 'What is that mug in the background?');
   assert.equal(calls, 1);
   assert.equal(result.items[0].timestampSec, 12.5);
   assert.equal(result.items[0].matchType, 'similar');
@@ -71,4 +73,38 @@ test('detection endpoint validates before inference, returns no-store data, and 
   assert.equal(limited.status, 429);
   assert.equal(limited.headers.get('retry-after'), '60');
   assert.equal(calls, 5);
+});
+
+
+test('on-demand stream question selects objects before a cropped-image Shop lookup', async t => {
+  let analyses = 0, searches = 0;
+  const app = express();
+  app.use('/api/shop', createItemDetectionRouter(async (frames, question) => {
+    analyses++;
+    assert.equal(question, 'What is that mug in the background?');
+    assert.equal(frames.length, 1);
+    return { items: [{ ...item, matchType: 'similar' }], model: 'gemini-4-hydrogen' };
+  }));
+  app.use('/api/shop', createStreamMatchRouter({ async call(tool, args) {
+    searches++;
+    assert.equal(tool, 'search_catalog');
+    assert.deepEqual(args.catalog, { query: item.searchQuery, like: [{ image: { content_type: frame.mimeType, data: frame.data } }], pagination: { limit: 3 } });
+    return { products: [], messages: [{ content: 'No matching products', type: 'info' }] };
+  } }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const post = (path: string, body: unknown) => fetch(base + '/api/shop/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify(body) });
+  assert.equal(analyses, 0); assert.equal(searches, 0);
+  assert.equal((await post('ask-stream', { frames: [frame], question: '' })).status, 400);
+  assert.equal(analyses, 0);
+  const answer = await post('ask-stream', { frames: [frame], question: 'What is that mug in the background?' });
+  assert.equal(answer.status, 200);
+  assert.equal((await answer.json()).items[0].searchQuery, item.searchQuery);
+  assert.equal(analyses, 1); assert.equal(searches, 0);
+  const matches = await post('match-stream-item', { query: item.searchQuery, image: frame });
+  assert.equal(matches.status, 200); assert.equal(matches.headers.get('cache-control'), 'no-store');
+  assert.equal((await matches.json()).messages[0].content, 'No matching products');
+  assert.equal(analyses, 1); assert.equal(searches, 1);
 });
