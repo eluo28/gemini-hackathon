@@ -1,5 +1,6 @@
 import { createSoundboard, type SoundboardSound } from '../services/soundboard';
 import type { GiftAlert } from '../shared/gifting';
+import type { RelayAudioListener } from '../services/stageCapture';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ANIMAL_AVATARS,
@@ -279,6 +280,11 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const mutedPeerIdsRef = useRef<Record<string, boolean>>({});
   const playbackCtxRef = useRef<AudioContext | null>(null);
   const peerPlayCursorRef = useRef<Map<string, number>>(new Map());
+  const relayAudioListeners = useRef(new Set<RelayAudioListener>());
+  const subscribeRelayAudio = useCallback((listener: RelayAudioListener) => {
+    relayAudioListeners.current.add(listener);
+    return () => { relayAudioListeners.current.delete(listener); };
+  }, []);
   const usingSyntheticAudioRef = useRef<boolean>(false);
   const meterAudioCtxRef = useRef<AudioContext | null>(null);
   const lastClipMarkMsRef = useRef<number>(0);
@@ -361,11 +367,13 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
 
   const playRelayedAudioChunk = useCallback(
     (fromId: string, pcm16: string, sampleRate: number) => {
-      if (mutedPeerIdsRef.current[fromId]) return;
       const peerPc = peersRef.current.get(fromId)?.pc;
       if (isPeerRtcHealthy(peerPc?.connectionState, peerPc?.iceConnectionState)) {
         return;
       }
+      // Capture the broadcast independently of this listener's speaker mute.
+      relayAudioListeners.current.forEach(listener => listener(fromId, pcm16, sampleRate));
+      if (mutedPeerIdsRef.current[fromId]) return;
       const ctx = ensurePlaybackContext();
       if (!ctx) return;
       if (ctx.state === 'suspended') {
@@ -1932,6 +1940,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     remoteStreams,
     remoteRelayFrames,
     peerConnectionStates,
+    subscribeRelayAudio,
     mutedPeerIds,
     audioBlocked,
     audioUnlockSeq,

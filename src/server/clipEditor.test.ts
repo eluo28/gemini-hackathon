@@ -61,13 +61,14 @@ test('missing key, upstream errors and rate limits fail without retries or crede
 });
 
 test('pipeline edits manual and qualifying captures, skips probes and rejects, and fails closed', async () => {
-  let calls = 0;
+  let calls = 0, decisionCalls = 0;
   let positive = false;
-  const judge = async (): Promise<ClipResult> => ({ ...result, answers: Object.fromEntries(['worthy', 'arc', 'viral', 'hook'].map(k => [k, { type: 'noul', noul: positive ? 1 : 0, confidence: 1 }])) });
+  const trigger = () => ({ trigger_detected: { type: 'noul' as const, noul: positive ? .63 : .49, confidence: .8 } });
+  const judge = async (): Promise<ClipResult> => { decisionCalls++; return { ...result, answers: trigger() }; };
   const editor = createClipEditor({ generate: async () => { calls++; return response(); } });
   const analyze = createClipAnalyzer(judge, editor, briefer);
   const capture = { id: 'id', source: 'auto-trigger' as const, startedAt: 0, roomId: 'room', thresholds: DEFAULT_THRESHOLDS };
-  const run = (r: ClipRequest) => analyze(r, media, 45, 15);
+  const run = (r: ClipRequest) => analyze({ ...r, trigger: trigger() }, media, 45, 15);
   await run({ ...request, stage: 'probe' });
   await run({ ...request, capture });
   assert.equal(calls, 0);
@@ -81,10 +82,11 @@ test('pipeline edits manual and qualifying captures, skips probes and rejects, a
   await run({ ...request, stage: 'instant', capture });
   await run(request); // Analysis-only and offline clients also receive edited boundaries.
   assert.equal(calls, 6);
+  assert.equal(decisionCalls, 2, 'only probe and instant stages call Decisions; full-context editing never rescores');
   await assert.rejects(createClipAnalyzer(judge, createClipEditor({ generate: async () => ({ ...response(), functionCalls: [] }) }), briefer)(request, media, 45, 15));
 });
 
-test('explicit queries bypass automatic quality scores; Hydrogen runs before Neon and its brief reaches the editor', async () => {
+test('explicit queries bypass the trigger; Hydrogen runs before Neon and its brief reaches the editor', async () => {
   const order: string[] = [];
   const analyze = createClipAnalyzer(async () => { order.push('decisions'); return result; },
     createClipEditor({ generate: async payload => {
@@ -95,9 +97,23 @@ test('explicit queries bypass automatic quality scores; Hydrogen runs before Neo
       return response();
     } }), createClipBriefer({ generate: async () => { order.push('hydrogen'); return { candidates: [{ finishReason: FinishReason.STOP }], text: JSON.stringify(briefData) }; } }));
   const output = await analyze({ ...request, query: 'the failed comeback', capture: { id: 'id', source: 'auto-trigger', startedAt: 0, roomId: 'room', thresholds: DEFAULT_THRESHOLDS } }, media, 45, 15);
-  assert.deepEqual(order, ['decisions', 'hydrogen', 'neon']);
+  assert.deepEqual(order, ['hydrogen', 'neon']);
   assert.equal(output.brief?.summary, briefData.summary);
   assert.ok(output.inspection.brief);
+});
+
+test('completed soundboard events exceed 50% and enter editing without an AI trigger score', async () => {
+  let edits = 0;
+  const analyze = createClipAnalyzer(async () => { throw new Error('Soundboard should not call Decisions'); },
+    createClipEditor({ generate: async () => { edits++; return response(); } }), briefer);
+  const output = await analyze({ ...request, capture: {
+    id: 'soundboard', source: 'soundboard', startedAt: 0, roomId: 'room', thresholds: { trigger: 1 },
+  } }, media, 45, 15);
+  assert.equal(output.triggerSource, 'soundboard');
+  assert.deepEqual(output.answers.trigger_detected, { type: 'noul', noul: 1, confidence: 1 });
+  assert.equal(edits, 1);
+  assert.ok(output.inspection.editor);
+  assert.deepEqual(output.inspection.request, { source: 'soundboard', event: 'playback-completed' });
 });
 
 function toolResponse(name: string) {
@@ -147,18 +163,4 @@ test('delegation is capped and a failing specialist cannot produce a saved edit'
   let editorCalls = 0;
   await assert.rejects(createClipAnalyzer(async () => result, createClipEditor({ generate: async () => { editorCalls++; return response(); } }), createClipBriefer({ generate: async () => ({ candidates: [{ finishReason: FinishReason.STOP }], text: '{}' }) }))(request, media, 45, 15));
   assert.equal(editorCalls, 0);
-});
-
-test('completed soundboard events exceed 50% and enter editing without an AI trigger score', async () => {
-  let edits = 0;
-  const analyze = createClipAnalyzer(async () => { throw new Error('Soundboard should not call Decisions'); },
-    createClipEditor({ generate: async () => { edits++; return response(); } }), briefer);
-  const output = await analyze({ ...request, capture: {
-    id: 'soundboard', source: 'soundboard', startedAt: 0, roomId: 'room', thresholds: { ...DEFAULT_THRESHOLDS, trigger: 1 },
-  } }, media, 45, 15);
-  assert.equal(output.triggerSource, 'soundboard');
-  assert.deepEqual(output.answers.trigger_detected, { type: 'noul', noul: 1, confidence: 1 });
-  assert.equal(edits, 1);
-  assert.ok(output.inspection.editor);
-  assert.deepEqual(output.inspection.request, { source: 'soundboard', event: 'playback-completed' });
 });

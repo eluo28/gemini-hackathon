@@ -1,3 +1,4 @@
+import { clipEvent, clipErrorDetails, clipRequestTrace, clipSpan, withClipTrace } from './clipTelemetry';
 import express from 'express';
 import multer from 'multer';
 import path from 'node:path';
@@ -10,6 +11,7 @@ export function createClipGenRouter(deps = { prepareClip, validateImage, describ
   const root = path.resolve(workDir);
   mkdirSync(root, { recursive: true });
   const router = express.Router();
+  router.use(clipRequestTrace);
   const clips = new Map<string, { path: string; duration: number; aspect_ratio: string }>();
   const jobs = new Map<string, { status: string; seconds: number | null; error: string | null; error_code?: string; video_url: string | null }>();
   const media = multer({ dest: root, limits: { fileSize: 200 * 1024 * 1024, files: 1, fields: 4 } });
@@ -21,7 +23,7 @@ export function createClipGenRouter(deps = { prepareClip, validateImage, describ
     try {
       if (!req.file) throw new ClipGenError(422, 'Video is required');
       validateUpload(req.file.size, req.file.mimetype, 200 * 1024 * 1024, videoTypes);
-      const info = await deps.prepareClip(req.file.path, dst);
+      const info = await clipSpan('swap.prepare', { clipId: id, inputBytes: req.file.size }, () => deps.prepareClip(req.file!.path, dst));
       clips.set(id, { ...info, path: dst });
       res.json({ clip_id: id, ...info, url: `/api/clip-gen/clips/${id}/video` });
     } catch (e) { await remove(dst); next(e); }
@@ -56,12 +58,12 @@ export function createClipGenRouter(deps = { prepareClip, validateImage, describ
       const id = randomUUID(), output = path.join(root, `${id}-output.mp4`);
       const job = { status: 'queued', seconds: null as number | null, error: null as string | null, video_url: null as string | null };
       jobs.set(id, job); started = true;
-      void (async () => {
+      void withClipTrace({ jobId: id }, async () => {
         const start = Date.now(); job.status = 'running';
-        try { const result = await deps.swapCharacter(source.path, files, target.trim(), output, client); Object.assign(job, { status: 'done', seconds: result.seconds, video_url: `/api/clip-gen/swaps/${id}/video` }); }
+        try { const result = await clipSpan('swap.generate', { photoCount: files.length }, () => deps.swapCharacter(source.path, files, target.trim(), output, client)); Object.assign(job, { status: 'done', seconds: result.seconds, video_url: `/api/clip-gen/swaps/${id}/video` }); }
         catch (e) { Object.assign(job, { status: 'error', seconds: (Date.now() - start) / 1000 }, jobError(e)); await remove(output); }
         finally { await Promise.all(files.map(f => remove(f.path))); }
-      })();
+      });
       res.json({ job_id: id });
     } catch (e) { next(e); }
     finally { if (!started) await Promise.all(files.map(f => remove(f.path))); }
@@ -74,6 +76,7 @@ export function createClipGenRouter(deps = { prepareClip, validateImage, describ
     res.type('mp4').sendFile(path.join(root, `${req.params.id}-output.mp4`));
   });
   router.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    clipEvent('request.failed', { error: clipErrorDetails(err) }, 'error');
     const status = err instanceof ClipGenError ? err.status : err instanceof multer.MulterError ? (err.code === 'LIMIT_FILE_SIZE' ? 413 : 422) : 500;
     res.status(status).json(jobError(err));
   });

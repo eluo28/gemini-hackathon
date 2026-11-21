@@ -14,6 +14,7 @@ export function parseClipRequest(value: unknown): ClipRequest {
   decodeWebm(v.media);
   if (!v.rules || (Object.keys(DEFAULT_RULES) as (keyof typeof DEFAULT_RULES)[]).some(key => typeof v.rules[key] !== 'string' || !v.rules[key].trim() || v.rules[key].length > 2000)) throw new ClipError('Each rule must contain 1–2,000 characters.');
   if (!Array.isArray(v.chat) || v.chat.length > 100 || v.chat.some(c => !c || typeof c.name !== 'string' || c.name.length > 80 || typeof c.text !== 'string' || c.text.length > 1000 || !Number.isFinite(c.offsetSec) || c.offsetSec < 0 || c.offsetSec > v.durationSec)) throw new ClipError('Invalid timestamped chat context.');
+  if (v.trigger !== undefined) validateAnswers({ answers: v.trigger, usage: { total_output_tokens: 0 } }, buildQuestions('probe'));
   if (v.capture) {
     const c = v.capture;
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(c.id) || typeof c.roomId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(c.roomId) || !['manual','voice','manual-flush','soundboard','auto-trigger','auto-probe'].includes(c.source) || !Number.isFinite(c.startedAt) || c.startedAt < 0 || !c.thresholds || (Object.keys(DEFAULT_THRESHOLDS) as (keyof typeof DEFAULT_THRESHOLDS)[]).some(k => !Number.isFinite(c.thresholds[k]) || c.thresholds[k] < 0 || c.thresholds[k] > 1)) throw new ClipError('Invalid clip capture metadata.');
@@ -34,15 +35,7 @@ export function buildQuestions(stage: ClipRequest['stage'], rules = DEFAULT_RULE
     trigger_detected: { type: 'noul', instructions: rules.trigger },
     trigger_type: { type: 'choice', instructions: 'Which kind of highlight best describes this window?', criteria: { reaction: 'Strong emotional reaction.', skill: 'Impressive performance or skill.', humor: 'A funny moment.', insight: 'Useful or surprising insight.', surprise: 'Unexpected event.', none: 'No clear highlight.' } },
   };
-  if (stage === 'probe') return trigger;
-  const questions: Record<string, Decisions.Question> = {
-    worthy: { type: 'noul', instructions: rules.worthy },
-    arc: { type: 'noul', instructions: rules.arc },
-    category: trigger.trigger_type,
-    viral: { type: 'score', instructions: 'Rate the likelihood viewers would share this highlight, based only on the content.', criteria: ['No sharing appeal.', 'Limited niche appeal.', 'Moderately shareable.', 'Strong sharing appeal.', 'Exceptional memorable moment.'] },
-    hook: { type: 'score', instructions: 'Rate how strongly this highlight could grab attention in the first seconds of a short clip.', criteria: ['No clear hook.', 'Weak hook needing context.', 'Understandable but ordinary.', 'Strong immediate hook.', 'Exceptional immediate curiosity or impact.'] },
-  };
-  return stage === 'instant' ? { ...trigger, ...questions } : questions;
+  return trigger;
 }
 export function validateAnswers(response: Decisions.CreateDecisionResponse, questions: Record<string, Decisions.Question>) {
   if (response.prompt_feedback?.block_reason) throw new ClipError('Gemini blocked this recording. No clip was saved.', 422);

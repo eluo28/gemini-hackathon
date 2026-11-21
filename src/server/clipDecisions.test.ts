@@ -24,6 +24,12 @@ test('clip validation rejects broken headers, oversized windows, malformed chat 
   assert.equal(parseClipRequest({ ...request, stage: 'probe', resolution: 'high' }).resolution, 'low');
   for (const change of [{ media: 'AAAA' }, { durationSec: 0 }, { durationSec: 80 }, { durationSec: NaN }, { targetSeconds: 90 }, { rules: { ...DEFAULT_RULES, trigger: '' } }, { chat: [{ name: 'A', text: 'hello', offsetSec: 61 }] }, { stage: 'made-up' }]) assert.throws(() => parseClipRequest({ ...request, ...change }));
 });
+
+test('soundboard captures are accepted only for full-context editing', () => {
+  const capture = { id: '12345678-1234-1234-1234-123456789abc', source: 'soundboard', startedAt: 0, roomId: 'room', thresholds: DEFAULT_THRESHOLDS };
+  assert.equal(parseClipRequest({ ...request, capture }).capture?.source, 'soundboard');
+  for (const stage of ['probe', 'instant']) assert.throws(() => parseClipRequest({ ...request, capture, stage }));
+});
 test('one typed Decisions call shares video and aligned chat, preserves scores and redacts inspector media', async () => {
   let calls = 0;
   const judge = createDecisionJudge(async payload => {
@@ -37,30 +43,33 @@ test('one typed Decisions call shares video and aligned chat, preserves scores a
     if (video.type === 'video') { assert.equal(video.resolution, 'medium'); assert.equal(video.data, media.toString('base64')); }
     assert.equal(context.type, 'text');
     if (context.type === 'text') { assert.match(context.text!, /"offsetSec":5/); assert.doesNotMatch(context.text!, /outside/); }
-    assert.equal(payload.questions.hook.type, 'score');
+    assert.deepEqual(Object.keys(payload.questions).sort(), ['trigger_detected', 'trigger_type']);
     assert.equal('safety' in payload.questions, false);
     return responseFor(payload.questions);
   });
   const result = await judge({ ...request, chat: [{ name: 'A', text: 'outside', offsetSec: 1 }, { name: 'A', text: 'reaction', offsetSec: 20 }] }, media, 45, 15);
   assert.equal(calls, 1);
   assert.equal(result.usage?.total_output_tokens, 0);
-  assert.equal(result.answers.worthy.type === 'noul' && result.answers.worthy.noul, .8);
+  assert.equal(result.answers.trigger_detected.type === 'noul' && result.answers.trigger_detected.noul, .8);
   assert.equal(result.media, media.toString('base64'));
   assert.doesNotMatch(JSON.stringify(result.inspection.request), new RegExp(media.toString('base64')));
 });
 test('blocked, missing, nonzero-token, malformed and unnormalized results never become clips', () => {
   const questions = buildQuestions('judge');
   const valid = responseFor(questions);
-  for (const change of [{ usage: undefined }, { usage: { total_output_tokens: 1 } }, { answers: {} }, { answers: { ...valid.answers, worthy: { type: 'noul', noul: NaN, confidence: .8 } } }, { answers: { ...valid.answers, category: { type: 'choice', choice: 'made-up', probabilities: {}, confidence: 1 } } }]) assert.throws(() => validateAnswers({ ...valid, ...change } as Decisions.CreateDecisionResponse, questions));
+  for (const change of [{ usage: undefined }, { usage: { total_output_tokens: 1 } }, { answers: {} }, { answers: { ...valid.answers, trigger_detected: { type: 'noul', noul: NaN, confidence: .8 } } }, { answers: { ...valid.answers, trigger_type: { type: 'choice', choice: 'made-up', probabilities: {}, confidence: 1 } } }]) assert.throws(() => validateAnswers({ ...valid, ...change } as Decisions.CreateDecisionResponse, questions));
   assert.throws(() => validateAnswers({ ...valid, prompt_feedback: { block_reason: 'SAFETY' } } as any, questions));
 });
-test('thresholds reclassify locally and missing scores fail closed', () => {
-  const answers = responseFor(buildQuestions('judge')).answers!;
-  assert.equal(qualifies(answers, DEFAULT_THRESHOLDS), false);
-  assert.equal(qualifies(answers, { ...DEFAULT_THRESHOLDS, viral: 0, hook: 0 }), true);
-  // Historical answers must not retain a removed approval gate.
-  assert.equal(qualifies({ ...answers, safety: { type: 'noul', noul: .01, confidence: .99 } }, { ...DEFAULT_THRESHOLDS, viral: 0, hook: 0 }), true);
-  assert.equal(qualifies({}, { trigger: 0, worthy: 0, arc: 0, viral: 0, hook: 0 }), false);
+test('only the initial trigger controls selection, including the 50% boundary', () => {
+  const answers = responseFor(buildQuestions('probe')).answers!;
+  assert.deepEqual(DEFAULT_THRESHOLDS, { trigger: .5 });
+  for (const score of [.499, .5, .626706]) {
+    assert.equal(qualifies({ ...answers, trigger_detected: { type: 'noul', noul: score, confidence: .8 },
+      worthy: { type: 'noul', noul: 0, confidence: 1 }, arc: { type: 'noul', noul: 0, confidence: 1 } }, DEFAULT_THRESHOLDS), score >= .5);
+  }
+  assert.equal(qualifies({}, DEFAULT_THRESHOLDS), false);
+  assert.deepEqual(Object.keys(DEFAULT_RULES), ['trigger']);
+  assert.throws(() => parseClipRequest({ ...request, trigger: { trigger_detected: { type: 'noul', noul: 1.1, confidence: 1 } } }));
 });
 test('upstream errors expose no credentials and are not retried', async () => {
   let calls = 0;

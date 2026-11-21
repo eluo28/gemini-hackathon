@@ -70,6 +70,14 @@ are included; microphone mute does not mute the soundboard. Completed sounds
 create an explicit 100% soundboard event and start clip editing, bypassing
 automatic thresholds. This event is labeled separately from AI probabilities.
 Stopping a sound cancels its trigger.
+The default trigger threshold is 50%, with sound effects and pronounced movement
+explicitly included in the trigger rule. There are no later quality-score gates.
+The browser console includes soundboard playback and detection events.
+
+For device-free checks, `/tests/soundboard.html` verifies actual recorded audio,
+mute behavior, cancellation, and cleanup. `/tests/soundboard-studio.html` runs the
+studio with generated video and silent input; going live and playing sounds there
+uses the configured Gemini key for real detection.
 
 ## Local clip telemetry
 
@@ -78,16 +86,17 @@ Follow the trace file in another terminal:
 
 ```bash
 tail -f .data/telemetry/clips.jsonl
-# Filter one browser request or capture:
-rg 'YOUR_TRACE_ID' .data/telemetry/clips.jsonl
+# Filter one browser request, capture, or swap job:
+rg 'YOUR_TRACE_OR_JOB_ID' .data/telemetry/clips.jsonl
 ```
 
 Traces cover request admission, normalization, Gemini Decisions, briefing, editor
-turns/reviews, trim/render, and library saves. Every stage reports
+turns/reviews, trim/render, library saves, and character swaps. Every stage reports
 start, elapsed time, success/failure, and a heartbeat every 10 seconds while waiting.
 Decision scores, thresholds, model names, token usage, tool names/cut bounds, provider
 errors, and FFmpeg stderr explain slow calls, rejected cuts, and failed generation.
-`traceId` correlates a request; `spanId` / `parentSpanId` link nested work. The response's `X-Request-ID` matches the trace. Development
+`traceId` correlates a request; `spanId` / `parentSpanId` link nested work; swap jobs
+also carry `jobId`. The response's `X-Request-ID` matches the trace. Development
 browser consoles show `[clipping]` events (enable **Verbose**), including skipped
 captures, post-roll, and request IDs. Browser-only events stay in the browser console.
 
@@ -200,10 +209,41 @@ Missing/opaque origins and cross-origin browser requests without an explicit
 configured origin remain rejected. Creator ownership cookies are still required
 when editing an existing profile. No global `trust proxy` setting is enabled.
 
+## Hosted clipping (AI Studio / Cloud Run)
+
+The frontend and backend ship together: `npm start` runs `server.ts`, which serves
+both the built frontend and `/api/clips/*`. The hosting service must run this
+Node server, not only serve the `dist` folder.
+
+Clipping uses native executables. `ffmpeg-static` and `ffprobe-static`
+install platform-specific binaries with the production npm dependencies; the
+server invokes their absolute paths. A global FFmpeg installation is not required.
+Install dependencies on the deployment's target OS/architecture (`npm ci`), with
+install scripts and optional dependencies enabled. Do not upload macOS
+`node_modules` to a Linux host. `FFMPEG_PATH` / `FFPROBE_PATH` can override the
+bundled binaries, but must refer to paths on the server.
+
+`npm run build` checks both executables before building the frontend, so missing
+media tools fail the build instead of silently disabling clipping. Deploy the
+updated source and lockfile through the existing AI Studio/Cloud Run deployment,
+keep `GEMINI_API_KEY` in the server's secrets, and run with `NODE_ENV=production`.
+Pushing to GitHub alone does not redeploy an AI Studio app unless an explicit
+continuous-deployment integration has been configured.
+
+After deployment, `/api/clips/status` must report `configured: true` and
+`mediaReady: true`; reload open studio tabs to refresh their setup check. If the
+check fails, inspect server logs for the specific executable error or run
+`npm run check:media` in the deployment environment.
+
+Clip files currently use local disk (`.data/clips` by default). Cloud Run's
+filesystem is ephemeral; this fix enables processing but does not add durable,
+shared storage across restarts or instances.
+
 ## Local Gemini auto-clipping
 
-1. Use Node 22+, install dependencies with `npm install`, and install **ffmpeg + ffprobe**
-   (`brew install ffmpeg` on macOS). Optional binary overrides: `FFMPEG_PATH` / `FFPROBE_PATH`.
+1. Use Node 22+ and install dependencies with `npm ci`. **FFmpeg + ffprobe** are
+   installed as production dependencies for the host platform; no global install
+   is needed. Optional binary overrides: `FFMPEG_PATH` / `FFPROBE_PATH`.
 2. Create **`.env.local`** at the repository root with `GEMINI_API_KEY="your-key"`.
    This file is ignored by Git. `.env.local` takes precedence over `.env`; existing
    shell environment variables take precedence over both. The key is used only by Express.
@@ -237,12 +277,13 @@ cadence; keep the recording tab active for reliable live capture.
 
 - **Two-stage (default):** every 10 / 15 / 20 seconds, a low-resolution probe checks
   the latest 15 seconds (shorter during warm-up). Crossing the trigger threshold
-  schedules a full-buffer judge after 10 seconds of post-roll measured from the
+  schedules full-buffer editing after 10 seconds of post-roll measured from the
   probed window's end (API latency counts toward that wait). Triggers are coalesced
-  while busy, with a 30-second cooldown. Manual and voice markers bypass the trigger
-  threshold and schedule the same judge.
-- **Single-stage:** disabling deep judge evaluates all highlight questions in each
-  immediate 15-second probe. Manual flush judges the available full buffer immediately.
+  while busy; there is no additional trigger cooldown. Manual and voice markers
+  bypass the trigger threshold and schedule the same editing pipeline.
+- **Single-stage:** disabling full-context editing checks the trigger and edits
+  the same 15-second window immediately when it passes. Manual flush edits the
+  available full buffer immediately.
 - **Chat:** off by default. When enabled, only messages inside the chosen recording
   window are included, with timestamps adjusted to the normalized video.
 - **Cancellation:** stopping the stream, switching rooms, or leaving cancels pending
@@ -265,14 +306,16 @@ The API inspector shows the actual submitted payload (video bytes explicitly
 omitted), the raw response, timing, and token counts. Successful results require
 `usage.total_output_tokens === 0`. Questions are editable for future requests.
 Thresholds apply to future automatic captures. Existing saved clips remain saved.
-Automatic selection uses four checks:
-clip-worthiness, complete arc, sharing potential, and hook strength.
+Automatic selection uses only the initial trigger probability (50% by default).
+The probe answers are carried into editing; the longer window is not rescored.
+Clip-worthiness, complete arc, sharing potential, and hook strength are not queried
+and cannot block saving. Media validation and API failures still surface as errors.
 
 The clipping pipeline separates annotation, understanding, and editing:
 
-- **Decisions** supplies structured categories and quality scores. It does not select
+- **Decisions** supplies the initial trigger probability and a descriptive category. It does not select
   peaks, durations, or edit boundaries. Probes stop after annotation, and automatic
-  candidates below the configured thresholds skip all editing agents.
+  candidates below the trigger threshold skip editing agents.
 - **Hydrogen** (`gemini-4-hydrogen`) watches the normalized source video and audio,
   interprets an optional `query`, and returns a validated editing brief: summary,
   intent, query relevance, and timestamped story beats.
@@ -286,7 +329,7 @@ The clipping pipeline separates annotation, understanding, and editing:
 In Clipping studio → Controls, **What should this clip be about?** supplies the
 query for manual and voice captures. API clients can send a `query` string of
 1–2,000 characters to `/api/clips/analyze`. Manual captures and explicit queries
-bypass generic quality thresholds; a requested event absent from the footage
+bypass the trigger threshold; a requested event absent from the footage
 returns 422 instead of saving an unrelated clip. Automatic probes do not use the
 manual-query field. Query, brief, edit rationale, and delegated reviews persist
 with saved clips. Invalid or failed agent responses never fall back to heuristic

@@ -24,7 +24,10 @@ test('resolveMediaBinaryCandidates prioritizes explicit env, then existing bundl
 });
 
 test('FFmpeg produces a decodable, timestamped WebM tail and an accurately trimmed download', async t => {
-  if (!await mediaAvailable()) { t.skip('FFmpeg is not installed'); return; }
+  const previousPath = process.env.PATH;
+  process.env.PATH = '';
+  t.after(() => { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; });
+  assert.equal(await mediaAvailable(), true, 'bundled media tools work without system PATH');
   const ffmpegBin = getFfmpegPath();
   const dir = await mkdtemp(path.join(tmpdir(), 'clip-test-')); t.after(() => rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'sample.webm');

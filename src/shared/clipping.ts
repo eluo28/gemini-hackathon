@@ -3,16 +3,16 @@ import type { Decisions, GenerateContentResponseUsageMetadata } from '@google/ge
 export type ClipStage = 'probe' | 'judge' | 'instant';
 export type Resolution = 'low' | 'medium' | 'high';
 export type ClipAnswers = Record<string, Decisions.Answer>;
-export interface ClipRules { trigger: string; worthy: string; arc: string }
+export interface ClipRules { trigger: string }
 export const DEFAULT_RULES: ClipRules = {
-  trigger: 'Does this window contain a notable reaction, surprising event, impressive skill, funny moment, or useful insight worth examining as a highlight?',
-  worthy: 'Does this video contain a compelling, understandable highlight worth sharing as a short standalone clip?',
-  arc: 'Does this window contain enough setup, a clear payoff, and the immediate reaction to make a complete standalone story?',
+  trigger: 'Does this window contain a distinct sound effect (such as an air horn, applause, victory fanfare, or drum sting), a sudden or pronounced visual movement or gesture, a notable reaction, surprising event, impressive skill, funny moment, or useful insight worth examining as a highlight? Brief soundboard reactions and visible movement count even without speech or a complete story. Ordinary background noise and idle motion do not count.',
 };
-export interface ClipThresholds { trigger: number; worthy: number; arc: number; viral: number; hook: number }
-export const DEFAULT_THRESHOLDS: ClipThresholds = { trigger: .7, worthy: .7, arc: .65, viral: .6, hook: .5 };
+export interface ClipThresholds { trigger: number }
+export const DEFAULT_THRESHOLDS: ClipThresholds = { trigger: .5 };
 export interface ClipChat { name: string; text: string; offsetSec: number }
 export interface ClipRequest {
+  /** Original probe answers carried into full-context editing, never rescored. */
+  trigger?: ClipAnswers;
   stage: ClipStage;
   query?: string;
   capture?: ClipCapture;
@@ -75,8 +75,9 @@ export interface ClipEdit {
   reviews?: ClipReview[];
 }
 export function shouldEditClip(request: ClipRequest, answers: ClipAnswers) {
-  return request.stage !== 'probe' && (!!request.query?.trim() || !request.capture ||
-    ['manual', 'voice', 'manual-flush', 'soundboard'].includes(request.capture.source) || qualifies(answers, request.capture.thresholds));
+  if (request.stage === 'probe') return false;
+  if (request.query?.trim() || !request.capture || ['manual', 'voice', 'manual-flush', 'soundboard'].includes(request.capture.source)) return true;
+  return qualifies(request.stage === 'judge' ? request.trigger || {} : answers, request.capture.thresholds);
 }
 export function probability(answers: ClipAnswers, key: string): number | null {
   const answer = answers[key];
@@ -85,10 +86,8 @@ export function probability(answers: ClipAnswers, key: string): number | null {
   return null;
 }
 export function qualifies(answers: ClipAnswers, thresholds: ClipThresholds): boolean {
-  return (['worthy', 'arc', 'viral', 'hook'] as const).every(key => {
-    const value = probability(answers, key);
-    return value !== null && value >= thresholds[key];
-  });
+  const value = probability(answers, 'trigger_detected');
+  return value !== null && value >= thresholds.trigger;
 }
 
 export interface ClipCapture {

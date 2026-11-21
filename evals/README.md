@@ -18,6 +18,12 @@ Open http://127.0.0.1:3002. Pick a video, seek to a moment, and mark:
 - **Peak:** a must-include instant inside the event (start inclusive, end exclusive).
 - **Reviewer + reviewed:** confirms you inspected this reference against the source.
 
+The source cards show thumbnails, development/held-out splits, and label counts.
+Dataset totals count all five videos; run quality only covers the loaded run.
+If port 3002 is busy, use `EVAL_PORT=3003 npm run eval:review` and open
+http://127.0.0.1:3003. The editor streams the existing local source files; it does
+not upload or duplicate the video dataset.
+
 Save multiple moments per video. Optional negative intervals identify sections
 that should not be clipped. Mark complete coverage only after labeling every
 clip-worthy moment in that video. Partial annotations are supported: unmatched

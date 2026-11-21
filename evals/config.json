@@ -1,17 +1,11 @@
 {
   "rules": {
-    "trigger": "Does this window contain a notable reaction, surprising event, impressive skill, funny moment, or useful insight worth examining as a highlight?",
-    "worthy": "Does this video contain a compelling, understandable highlight worth sharing as a short standalone clip?",
-    "arc": "Does this window contain enough setup, a clear payoff, and the immediate reaction to make a complete standalone story?"
+    "trigger": "Does this window contain a distinct sound effect (such as an air horn, applause, victory fanfare, or drum sting), a sudden or pronounced visual movement or gesture, a notable reaction, surprising event, impressive skill, funny moment, or useful insight worth examining as a highlight? Brief soundboard reactions and visible movement count even without speech or a complete story. Ordinary background noise and idle motion do not count."
   },
   "thresholds": {
-    "trigger": 0.7,
-    "worthy": 0.7,
-    "arc": 0.65,
-    "viral": 0.6,
-    "hook": 0.5
+    "trigger": 0.5
   },
   "intervalSec": 15,
   "postRollSec": 10,
-  "cooldownSec": 30
+  "cooldownSec": 0
 }
