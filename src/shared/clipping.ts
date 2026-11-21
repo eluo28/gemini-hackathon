@@ -41,7 +41,7 @@ export interface ClipResult {
 export function soundboardTrigger(durationSec: number, sourceOffsetSec = 0): ClipResult {
   return {
     triggerSource: 'soundboard',
-    answers: { trigger_detected: { type: 'noul', noul: 1, confidence: 1 } },
+    answers: { trigger_detected: { type: 'noul', noul: .65, confidence: 1 } },
     durationSec, sourceOffsetSec, trim: { start: 0, end: durationSec },
     inspection: { request: { source: 'soundboard', event: 'playback-completed' }, response: {}, elapsedMs: 0 },
   };

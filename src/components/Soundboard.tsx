@@ -18,7 +18,7 @@ export function Soundboard({ enabled, busy, playing, error, onPlay, onStop, onCl
     <div className="flex items-start justify-between gap-3">
       <div>
         <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2"><AudioLines className="w-4 h-4" />Soundboard</h2>
-        <p className="text-xs text-slate-500 mt-1">Play a reaction on stream. Completed sounds trigger a clip at 100%.</p>
+        <p className="text-xs text-slate-500 mt-1">Play a reaction on stream. Completed sounds trigger a clip at 65%.</p>
       </div>
       <button type="button" onClick={onClose} aria-label="Close soundboard" className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"><X className="w-4 h-4" /></button>
     </div>

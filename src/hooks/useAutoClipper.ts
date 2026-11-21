@@ -170,7 +170,7 @@ export function useAutoClipper(options: Options) {
       const result = soundboardTrigger(Math.min(60, recorder.current.bufferedSeconds));
       setLatest(result);
       setHistory(old => [{ id: crypto.randomUUID(), stage: 'probe' as const, result }, ...old].slice(0, 20));
-      clipDebug('soundboard.trigger', { signal: 1 });
+      clipDebug('soundboard.trigger', { signal: probability(result.answers, 'trigger_detected') });
       flush('soundboard', triggeredAt);
     };
     soundboardTimer.current = setTimeout(check, 350);
