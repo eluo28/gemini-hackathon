@@ -58,7 +58,7 @@ export function getRenegotiationAction({
  * components avoid resetting <video>.srcObject when tracks have not changed.
  */
 export function getVideoTrackSignature(stream: MediaStream | null): string {
-  if (!stream) return '';
+  if (!stream || typeof stream.getVideoTracks !== 'function') return '';
   return stream
     .getVideoTracks()
     .filter((t) => t.readyState !== 'ended')

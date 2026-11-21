@@ -57,17 +57,19 @@ export function createStageCapture() {
       if (!tracks.includes(track)) { node.disconnect(); source.nodes.delete(track); }
     }
     for (const track of tracks.filter(t => t.kind === 'audio')) {
-      if (!source.nodes.has(track)) {
-        const node = audio.createMediaStreamSource(new MediaStream([track]));
-        node.connect(source.directGain); source.nodes.set(track, node);
+      if (!source.nodes.has(track) && audio.state !== 'closed') {
+        try {
+          const node = audio.createMediaStreamSource(new MediaStream([track]));
+          node.connect(source.directGain); source.nodes.set(track, node);
+        } catch { /* A remote audio track may end while being attached. */ }
       }
     }
     source.tracks = tracks;
   };
   const dispose = (source: Source) => {
     source.unlisten?.();
-    source.nodes.forEach(node => node.disconnect());
-    source.pendingAudio.forEach(node => { node.stop(); node.disconnect(); });
+    source.nodes.forEach(node => { try { node.disconnect(); } catch {} });
+    source.pendingAudio.forEach(node => { try { node.stop(); node.disconnect(); } catch {} });
     source.directGain.disconnect(); source.relayGain.disconnect();
     source.video.pause(); source.video.srcObject = null;
     source.relayImage.src = '';
@@ -89,7 +91,9 @@ export function createStageCapture() {
         const fw = frame instanceof HTMLVideoElement ? frame.videoWidth : frame.naturalWidth;
         const fh = frame instanceof HTMLVideoElement ? frame.videoHeight : frame.naturalHeight;
         const ratio = Math.min(w / fw, h / fh);
-        context.drawImage(frame, x + (w - fw * ratio) / 2, y + (h - fh * ratio) / 2, fw * ratio, fh * ratio);
+        try {
+          context.drawImage(frame, x + (w - fw * ratio) / 2, y + (h - fh * ratio) / 2, fw * ratio, fh * ratio);
+        } catch { /* Ignore transient frames while a remote stream reconnects. */ }
       } else {
         context.fillStyle = '#94a3b8'; context.font = '18px sans-serif';
         context.fillText(info.videoEnabled === false ? 'Camera off' : 'Connecting…', x + 24, y + h / 2, Math.max(1, w - 48));
@@ -164,8 +168,10 @@ export function createStageCapture() {
       if (stopped) return;
       stopped = true; clearInterval(timer);
       window.removeEventListener('pointerdown', resume); window.removeEventListener('keydown', resume);
-      silence.stop(); silence.disconnect(); sources.forEach(dispose); sources.clear(); limiter.disconnect();
-      output.getTracks().forEach(t => t.stop()); void audio.close();
+      try { silence.stop(); silence.disconnect(); } catch {}
+      sources.forEach(dispose); sources.clear(); limiter.disconnect();
+      output.getTracks().forEach(t => { try { t.stop(); } catch {} });
+      if (audio.state !== 'closed') void audio.close().catch(() => {});
     },
   };
 }

@@ -15,9 +15,9 @@ comfort and physical phone tilt require real-device testing. Cross-origin
 videos must permit CORS; stereo is full-width left-eye/right-eye SBS.
 
 Open `/clip-gen` for isolated Gemini Omni character replacement.
-Clip Gen uses packaged `ffmpeg-static`/`ffprobe-static` binaries (system fallback),
+Clip Gen uses packaged `ffmpeg-static` and optional system ffprobe (FFmpeg metadata fallback),
 with optional `FFMPEG_PATH`/`FFPROBE_PATH` overrides and server-side `GEMINI_API_KEY`.
-Production installs must include these dependencies and allow their binary installation scripts.
+Production installs must include this dependency and allow its binary installation script.
 Upload a video, use the sample, or choose a saved video from **My clips** (the same
 browser-owned `/api/clips/library` used by the studio). Then click a person, refine the description, add 1–3
 reference photos or camera selfies, then swap. Compare synchronized results or download MP4.
@@ -67,7 +67,7 @@ Hosts and co-hosts can open **Soundboard** in the stream control dock in develop
 and production. Go live with clip detection enabled to play air horn, applause,
 victory, or drum sting into the stream and clip buffer. Volume and Stop controls
 are included; microphone mute does not mute the soundboard. Completed sounds
-create an explicit 100% soundboard event and start clip editing, bypassing
+create an explicit 65% soundboard event and start clip editing, bypassing
 automatic thresholds. This event is labeled separately from AI probabilities.
 Stopping a sound cancels its trigger.
 The default trigger threshold is 50%, with sound effects and pronounced movement
@@ -215,15 +215,15 @@ The frontend and backend ship together: `npm start` runs `server.ts`, which serv
 both the built frontend and `/api/clips/*`. The hosting service must run this
 Node server, not only serve the `dist` folder.
 
-Clipping uses native executables. `ffmpeg-static` and `ffprobe-static`
-install platform-specific binaries with the production npm dependencies; the
-server invokes their absolute paths. A global FFmpeg installation is not required.
+Clipping uses native executables. `ffmpeg-static` installs a platform-specific executable with the production npm
+dependencies. Metadata uses system ffprobe when available and falls back to FFmpeg.
+A global FFmpeg or ffprobe installation is not required.
 Install dependencies on the deployment's target OS/architecture (`npm ci`), with
 install scripts and optional dependencies enabled. Do not upload macOS
 `node_modules` to a Linux host. `FFMPEG_PATH` / `FFPROBE_PATH` can override the
 bundled binaries, but must refer to paths on the server.
 
-`npm run build` checks both executables before building the frontend, so missing
+`npm run build` checks media processing availability before building the frontend, so missing
 media tools fail the build instead of silently disabling clipping. Deploy the
 updated source and lockfile through the existing AI Studio/Cloud Run deployment,
 keep `GEMINI_API_KEY` in the server's secrets, and run with `NODE_ENV=production`.
@@ -241,8 +241,8 @@ shared storage across restarts or instances.
 
 ## Local Gemini auto-clipping
 
-1. Use Node 22+ and install dependencies with `npm ci`. **FFmpeg + ffprobe** are
-   installed as production dependencies for the host platform; no global install
+1. Use Node 22+ and install dependencies with `npm ci`. **FFmpeg** is
+   installed as a production dependency for the host platform; no global install
    is needed. Optional binary overrides: `FFMPEG_PATH` / `FFPROBE_PATH`.
 2. Create **`.env.local`** at the repository root with `GEMINI_API_KEY="your-key"`.
    This file is ignored by Git. `.env.local` takes precedence over `.env`; existing

@@ -1,6 +1,6 @@
 import { clipEvent, clipErrorDetails, clipSpan, withClipTrace } from '../src/server/clipTelemetry';
 import dotenv from 'dotenv';
-import { getFfmpegPath as ffmpegPath, getFfprobePath as ffprobePath } from '../src/server/clipMedia';
+import { getFfmpegPath as ffmpegPath, probeMedia } from '../src/server/clipMedia';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
@@ -20,7 +20,7 @@ if (!source) throw new Error('Usage: npx tsx scripts/clip-video.ts <video> [outp
 const output = path.resolve(process.argv[3] || `.data/clip-runs/${Date.now()}`);
 const work = path.join(output, '.work');
 await mkdir(work, { recursive: true });
-const metadata = JSON.parse((await exec(ffprobePath(), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', source])).stdout);
+const metadata = await probeMedia(source);
 const duration = Number(metadata.format.duration);
 if (!Number.isFinite(duration) || duration <= 0) throw new Error('Cannot read video duration.');
 const judge = createClipAnalyzer();

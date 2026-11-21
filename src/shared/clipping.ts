@@ -41,7 +41,7 @@ export interface ClipResult {
 export function soundboardTrigger(durationSec: number, sourceOffsetSec = 0): ClipResult {
   return {
     triggerSource: 'soundboard',
-    answers: { trigger_detected: { type: 'noul', noul: 1, confidence: 1 } },
+    answers: { trigger_detected: { type: 'noul', noul: .65, confidence: 1 } },
     durationSec, sourceOffsetSec, trim: { start: 0, end: durationSec },
     inspection: { request: { source: 'soundboard', event: 'playback-completed' }, response: {}, elapsedMs: 0 },
   };
@@ -79,8 +79,8 @@ export function shouldEditClip(request: ClipRequest, answers: ClipAnswers) {
   if (request.query?.trim() || !request.capture || ['manual', 'voice', 'manual-flush', 'soundboard'].includes(request.capture.source)) return true;
   return qualifies(request.stage === 'judge' ? request.trigger || {} : answers, request.capture.thresholds);
 }
-export function probability(answers: ClipAnswers, key: string): number | null {
-  const answer = answers[key];
+export function probability(answers: ClipAnswers | undefined, key: string): number | null {
+  const answer = answers?.[key];
   if (answer?.type === 'noul') return answer.noul;
   if (answer?.type === 'score') return answer.score / 4;
   return null;

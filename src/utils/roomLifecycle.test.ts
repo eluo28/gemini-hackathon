@@ -7,6 +7,7 @@ import {
   generateFriendlyRoomSlug,
   isRoomDeprecated,
   isRoomVisibleInDirectory,
+  parseRecentRoomHistory,
   removeRecentRoomHistory,
   upsertRecentRoomHistory,
 } from './roomLifecycle';
@@ -94,4 +95,37 @@ test('generateFriendlyRoomSlug and formatRelativeTime produce clean labels', () 
   assert.equal(formatRelativeTime(100_000, 120_000), 'Just now');
   assert.equal(formatRelativeTime(100_000, 100_000 + 5 * 60 * 1000), '5m ago');
   assert.equal(formatRelativeTime(100_000, 100_000 + 3 * 3600 * 1000), '3h ago');
+});
+
+test('parseRecentRoomHistory discards corrupted localStorage entries and normalizes partial ones', () => {
+  assert.deepEqual(parseRecentRoomHistory(null), []);
+  assert.deepEqual(parseRecentRoomHistory('{bad json'), []);
+  assert.deepEqual(parseRecentRoomHistory(JSON.stringify({ notAnArray: true })), []);
+
+  const mixed = JSON.stringify([
+    null,
+    42,
+    { title: 'Missing roomId' },
+    { roomId: '  My Room! ', title: '', category: 'Unknown', lastRole: 'admin', lastVisitedAt: 'bad' },
+    { roomId: 'live-coding', title: 'Build Night', category: 'Live Coding', lastRole: 'cohost', lastVisitedAt: 12345 },
+  ]);
+  const parsed = parseRecentRoomHistory(mixed);
+  assert.equal(parsed.length, 2);
+  assert.equal(parsed[0].roomId, 'my-room');
+  assert.equal(parsed[0].title, 'my-room');
+  assert.equal(parsed[0].category, 'Just Chatting');
+  assert.equal(parsed[0].lastRole, 'host');
+  assert.equal(parsed[1].roomId, 'live-coding');
+  assert.equal(parsed[1].title, 'Build Night');
+  assert.equal(parsed[1].category, 'Live Coding');
+  assert.equal(parsed[1].lastRole, 'cohost');
+  assert.equal(parsed[1].lastVisitedAt, 12345);
+});
+
+test('filterAndSortDirectoryRooms tolerates malformed room entries without throwing', () => {
+  const valid = makeSummary({ roomId: 'ok-room', title: 'Valid Room', isLive: true });
+  const malformed = [null, undefined, { roomId: 123 }, valid] as unknown as RoomSummary[];
+  const result = filterAndSortDirectoryRooms(malformed, 'valid');
+  assert.deepEqual(result.map((r) => r.roomId), ['ok-room']);
+  assert.deepEqual(filterAndSortDirectoryRooms(null as unknown as RoomSummary[]), []);
 });

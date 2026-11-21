@@ -28,6 +28,10 @@ export default defineConfig(() => {
         },
       },
     ],
+    build: {
+      sourcemap: false,
+      emptyOutDir: true,
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

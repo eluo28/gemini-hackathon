@@ -36,7 +36,7 @@ export class RollingRecorder {
     const cutoff = Date.now() - 60_000;
     this.recordings = this.recordings.filter(entry => {
       if (entry.startedAt >= cutoff) return true;
-      if (entry.recorder.state !== 'inactive') entry.recorder.stop();
+      if (entry.recorder.state !== 'inactive') { try { entry.recorder.stop(); } catch { /* ignore */ } }
       entry.chunks = [];
       return false;
     });
@@ -69,7 +69,7 @@ export class RollingRecorder {
     this.stopped = true;
     clearInterval(this.timer);
     for (const cancel of this.pending) cancel();
-    for (const entry of this.recordings) { if (entry.recorder.state !== 'inactive') entry.recorder.stop(); entry.chunks = []; }
+    for (const entry of this.recordings) { if (entry.recorder.state !== 'inactive') { try { entry.recorder.stop(); } catch { /* ignore */ } } entry.chunks = []; }
     this.recordings = [];
   }
 }

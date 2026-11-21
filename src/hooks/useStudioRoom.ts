@@ -23,6 +23,7 @@ import {
   RELAY_TARGET_SAMPLE_RATE,
 } from '../utils/audioRelay';
 import {
+  parseRecentRoomHistory,
   RECENT_ROOMS_STORAGE_KEY,
   removeRecentRoomHistory,
   upsertRecentRoomHistory,
@@ -220,10 +221,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
   const [directoryRooms, setDirectoryRooms] = useState<RoomSummary[]>([]);
   const [recentRooms, setRecentRooms] = useState<RecentRoomEntry[]>(() => {
     try {
-      const raw = window.localStorage.getItem(RECENT_ROOMS_STORAGE_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? (parsed as RecentRoomEntry[]) : [];
+      return parseRecentRoomHistory(window.localStorage.getItem(RECENT_ROOMS_STORAGE_KEY));
     } catch {
       return [];
     }
@@ -474,7 +472,7 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
       const res = await fetch('/api/rooms', { cache: 'no-store' });
       if (res.ok) {
         const data = (await res.json()) as RoomsListResponse;
-        setDirectoryRooms(data.rooms || []);
+        setDirectoryRooms(Array.isArray(data?.rooms) ? data.rooms : []);
       }
     } catch {
       // ignore transient poll failures
@@ -1186,53 +1184,57 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     if (!Ctor) return;
 
     let active = true;
-    const recognition = new Ctor();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-
-    recognition.onresult = (event) => {
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const transcript = event.results[i]?.[0]?.transcript || '';
-        if (detectClipTriggerPhrase(transcript)) {
-          triggerClipMark('voice');
-        }
-      }
-    };
-
-    recognition.onerror = (ev) => {
-      if (
-        ev.error === 'not-allowed' ||
-        ev.error === 'service-not-allowed' ||
-        ev.error === 'audio-capture'
-      ) {
-        active = false;
-      }
-    };
-
-    recognition.onend = () => {
-      if (active) {
-        try {
-          recognition.start();
-        } catch {
-          // ignore restart race
-        }
-      }
-    };
-
+    let recognition: SpeechRecognitionInstance | null = null;
     try {
+      recognition = new Ctor();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event) => {
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          const transcript = event.results[i]?.[0]?.transcript || '';
+          if (detectClipTriggerPhrase(transcript)) {
+            triggerClipMark('voice');
+          }
+        }
+      };
+
+      recognition.onerror = (ev) => {
+        if (
+          ev.error === 'not-allowed' ||
+          ev.error === 'service-not-allowed' ||
+          ev.error === 'audio-capture'
+        ) {
+          active = false;
+        }
+      };
+
+      recognition.onend = () => {
+        if (active && recognition) {
+          try {
+            recognition.start();
+          } catch {
+            // ignore restart race
+          }
+        }
+      };
+
       recognition.start();
     } catch {
       active = false;
+      recognition = null;
     }
 
     return () => {
       active = false;
-      recognition.onend = null;
-      try {
-        recognition.stop();
-      } catch {
-        // ignore
+      if (recognition) {
+        recognition.onend = null;
+        try {
+          recognition.stop();
+        } catch {
+          // ignore
+        }
       }
     };
   }, [audioEnabled, hasJoined, isLive, selfRole, triggerClipMark]);
@@ -1252,7 +1254,15 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     const connect = () => {
       if (disposed) return;
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+      } catch {
+        const delay = Math.min(8000, 1000 * Math.pow(1.5, reconnectAttemptRef.current));
+        reconnectAttemptRef.current += 1;
+        reconnectTimer = window.setTimeout(connect, delay);
+        return;
+      }
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -1576,9 +1586,13 @@ export function useStudioRoom(initialRoomId = 'main-stage') {
     offscreenVideo.setAttribute('aria-hidden', 'true');
     offscreenVideo.style.cssText =
       'position:fixed;bottom:0;right:0;width:1px;height:1px;opacity:0.001;pointer-events:none;z-index:-1;';
-    offscreenVideo.srcObject = localStream;
-    document.body.appendChild(offscreenVideo);
-    offscreenVideo.play().catch(() => {});
+    try {
+      offscreenVideo.srcObject = localStream;
+      document.body.appendChild(offscreenVideo);
+      offscreenVideo.play()?.catch?.(() => {});
+    } catch {
+      return;
+    }
 
     const canvas = document.createElement('canvas');
     canvas.width = 480;
