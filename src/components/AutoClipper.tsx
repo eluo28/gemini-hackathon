@@ -1,3 +1,4 @@
+import { shopClipTitle } from '../utils/clipShopping';
 import { useEffect, useRef, useState } from 'react';
 import { Scissors, SlidersHorizontal, X, ScanLine, Download, Trash2, Code2, Activity, Film, ChevronDown, LoaderCircle } from 'lucide-react';
 import { createPortal } from 'react-dom';
@@ -20,8 +21,7 @@ function ChoiceBars({ answers }: { answers: ClipAnswers }) {
 }
 function ClipCard({ clip, clipper, onShopClip }: { clip: SavedClip; clipper: Clipper; onShopClip?: (clip: SavedClip) => void }) {
   const [deleting, setDeleting] = useState(false);
-  const category = clip.answers.trigger_type || clip.answers.category;
-  const title = clip.title?.trim() || clip.brief?.title?.trim() || (category?.type === 'choice' ? category.choice : 'Highlight');
+  const title = shopClipTitle(clip);
   const description = clip.description?.trim() || clip.brief?.description?.trim() || clip.brief?.summary?.trim() || 'No description is available for this older clip.';
   return <article className="ac-clip">
     <video src={clip.url} controls preload="metadata" playsInline />

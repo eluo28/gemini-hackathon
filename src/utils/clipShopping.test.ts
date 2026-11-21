@@ -1,49 +1,62 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clipSampleTimes, clipShopCommand, hasClipReference, resolveClipQuestion, type ShopClip } from './clipShopping';
+import { clipSampleTimes, clipShopCommand, hasClipReference, resolveClipQuestion, shopClipTitle, type ShopClip } from './clipShopping';
 
-const first: ShopClip = { id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', roomId: 'room', url: '/api/clips/library/aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa/media', durationSec: 20 };
-const second: ShopClip = { ...first, id: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb' };
+const first: ShopClip = { id: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', roomId: 'room', url: '/api/clips/library/aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa/media', durationSec: 20, title: 'Air Horn Interrupts Clip Farming Practice' };
+const second: ShopClip = { ...first, id: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', title: 'Garden Tour' };
 
-test('clip commands resolve a stable saved ID and preserve the object question; plain questions stay live', () => {
+test('Shop this clip populates its displayed name and resolves without a hidden selected ID', () => {
   const command = clipShopCommand(first) + 'find me that mug';
-  assert.equal(command, `@shop look in {clip:${first.id}}, find me that mug`);
+  assert.equal(command, '@shop look in "Air Horn Interrupts Clip Farming Practice", find me that mug');
+  assert.ok(!command.includes(first.id));
   assert.deepEqual(resolveClipQuestion(command.slice(6), [second, first]), { clip: first, question: 'find me that mug' });
-  assert.equal(resolveClipQuestion('What is that mug?', [first]), null);
-  assert.equal(hasClipReference('Look in {this clip}, find the mug'), true);
+  const fallback = { ...first, title: '', answers: { category: { type: 'choice' as const, choice: 'Garden Tour', probabilities: {}, confidence: 1 } } };
+  assert.equal(shopClipTitle(fallback), 'Garden Tour');
 });
 
-test('this clip requires an explicit selection or one unambiguous saved clip; foreign URLs and deleted IDs cannot resolve', () => {
-  assert.equal(resolveClipQuestion('look in {this clip}, find the mug', [first])!.clip.id, first.id);
-  assert.equal(resolveClipQuestion('look in {this clip}, find the mug', [first, second], second.id)!.clip.id, second.id);
-  assert.throws(() => resolveClipQuestion('look in {this clip}, find the mug', [first, second]), /Choose/);
-  assert.throws(() => resolveClipQuestion('look in {this clip}, find the mug', [second], first.id), /Choose/);
-  assert.throws(() => resolveClipQuestion('look in {https://example.com/private.webm}, find the mug', [first]), /not in your saved clips/);
-  assert.throws(() => resolveClipQuestion(`look in {clip:${first.id}}, find the mug`, []), /not in your saved clips/);
-  assert.throws(() => resolveClipQuestion(`look in {clip:${first.id}}`, [first]), /Add a question/);
-  assert.throws(() => resolveClipQuestion('look in {broken', [first]), /Use @shop/);
+test('partial titles work without the word clip or a separate object question', () => {
+  assert.equal(hasClipReference('look in air horn interrupts'), true);
+  assert.deepEqual(resolveClipQuestion('look in air horn interrupts', [second, first]), { clip: first, question: 'Find products visible in this clip.' });
+  assert.deepEqual(resolveClipQuestion('look in air horn interrupts, find me the mug', [first]), { clip: first, question: 'find me the mug' });
+  assert.equal(resolveClipQuestion('look in air horn interupts, find the mug', [first])!.clip, first);
+  assert.equal(resolveClipQuestion('look in farming horn air, find the mug', [first])!.clip, first);
+});
+
+test('natural clip titles preserve quoted words and generated titles safely contain commas and quotes', () => {
+  const clip = { ...first, title: "Laughing Video Call Moment With 'Clip It' Reaction" };
+  const question = "in the Laughing Video Call Moment With 'Clip It' Reaction clip, find me the plant";
+  assert.equal(hasClipReference(question), true);
+  assert.deepEqual(resolveClipQuestion(question, [second, clip]), { clip, question: 'find me the plant' });
+  assert.equal(resolveClipQuestion('look in laughing video call moment with “Clip It” reaction clip, find the plant', [clip])!.clip, clip);
+  const quoted = { ...first, title: 'Air horn, then "Clip It"' };
+  assert.equal(resolveClipQuestion((clipShopCommand(quoted) + 'find the mug').slice(6), [quoted])!.clip, quoted);
+});
+
+test('exact names win over partial matches while ambiguous names ask for clarification', () => {
+  const similar = { ...second, title: 'Air Horn Interrupts The Garden Tour' };
+  assert.throws(() => resolveClipQuestion('look in air horn interrupts', [first, similar]), /More than one/);
+  assert.equal(resolveClipQuestion('look in "Air Horn Interrupts Clip Farming Practice"', [first, similar])!.clip, first);
+  assert.throws(() => resolveClipQuestion('look in "Garden Tour"', [second, { ...first, title: 'Garden Tour' }]), /More than one/);
+});
+
+test('unknown names and old ID commands never fall back to the stream', () => {
+  assert.throws(() => resolveClipQuestion('look in missing title, find the plant', [first]), /No saved clip/);
+  assert.throws(() => resolveClipQuestion('look in air horn interrupts', []), /No saved clip/);
+  for (const reference of [`{clip:${first.id}}`, '{this clip}', 'clip:' + first.id, '{broken']) {
+    assert.throws(() => resolveClipQuestion(`look in ${reference}, find the mug`, [first]), /Use a clip name/);
+  }
+  assert.throws(() => resolveClipQuestion('look in "unfinished', [first]), /Use @shop/);
+});
+
+test('normal live questions stay live, including questions about hair clips', () => {
+  for (const question of ['What is that mug?', 'find that hair clip', 'look at that drink']) {
+    assert.equal(hasClipReference(question), false);
+    assert.equal(resolveClipQuestion(question, [first]), null);
+  }
 });
 
 test('clip sampling stays within the saved video and rejects unusable duration', () => {
   assert.deepEqual(clipSampleTimes(20), [2, 10, 18]);
   assert.ok(clipSampleTimes(0.005).every(time => time >= 0 && time < 0.005));
   for (const invalid of [0, -1, NaN, Infinity]) assert.throws(() => clipSampleTimes(invalid), /duration/);
-});
-
-test('natural clip titles route the exact production command to the saved clip, including quoted words', () => {
-  const clip = { ...first, title: "Laughing Video Call Moment With 'Clip It' Reaction" };
-  const question = "in the Laughing Video Call Moment With 'Clip It' Reaction clip, find me the plant";
-  assert.equal(hasClipReference(question), true);
-  assert.deepEqual(resolveClipQuestion(question, [second, clip]), { clip, question: 'find me the plant' });
-  assert.equal(resolveClipQuestion('look in the laughing video call moment with “Clip It” reaction clip, find the plant', [clip])!.clip, clip);
-  assert.equal(resolveClipQuestion('in The Garden clip, find the pot', [{ ...first, title: 'The Garden' }])!.clip.id, first.id);
-  assert.equal(resolveClipQuestion('find that hair clip', [clip]), null);
-});
-
-test('missing, malformed and ambiguous title references never fall back to the live stream', () => {
-  const clip = { ...first, title: 'Garden' };
-  assert.throws(() => resolveClipQuestion('in the missing clip, find the plant', [clip]), /not in your saved clips/);
-  assert.throws(() => resolveClipQuestion('in the Garden clip, find the plant', [clip, { ...second, title: 'Garden' }]), /More than one/);
-  assert.throws(() => resolveClipQuestion('in the Garden clip find the plant', [clip]), /Use @shop/);
-  assert.throws(() => resolveClipQuestion('in the Garden clip, ', [clip]), /Add a question/);
 });

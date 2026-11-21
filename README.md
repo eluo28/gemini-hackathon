@@ -496,16 +496,19 @@ transaction store. Do not log credentials, private checkout URLs or addresses.
 ### Shop a saved clip
 
 While in a room, open **My Clips** and choose **Shop this clip**. This inserts
-`@shop look in {clip:CLIP_ID}, ` into the existing Chat composer. Add your question
-and send it. `{this clip}` also resolves the selected clip (or the only saved
-clip). Unknown or deleted references are rejected rather than falling back to
-live video.
+`@shop look in "Clip title", ` into Chat. Add an object question and send it.
+Clip IDs are not accepted in chat. Both the command and the inspection status use
+human-readable names.
 
-You can also reference a saved clip by its title, for example
-`@shop in the Laughing Video Call Moment With 'Clip It' Reaction clip, find me the plant`.
-Titles match ignoring case and punctuation. Missing or duplicate titles show an error
-and never fall back to analyzing the current stream; use **Shop this clip** to select
-an exact clip in those cases. Only clips in your private saved library can resolve.
+You can type a partial title, for example `@shop look in air horn interrupts`
+for **Air Horn Interrupts Clip Farming Practice**, or add a question:
+`@shop look in air horn interrupts, find me the mug`.
+Without an object question, Shop looks for products visible in the clip.
+The previous natural wording (`@shop in the TITLE clip, find me the plant`)
+also works. Matching ignores case and punctuation, supports partial phrases,
+reordered title words and small spelling mistakes. Missing or ambiguous names
+show an error asking for a more specific title and never inspect the live stream.
+Only clips in your private saved library can match.
 
 Clip shopping takes three frames at 10%, 50%, and 90% of the saved clip, sends
 those three images in one Gemini request, and reuses the live Shop matching and

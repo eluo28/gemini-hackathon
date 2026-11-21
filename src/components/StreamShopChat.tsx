@@ -1,4 +1,4 @@
-import { resolveClipQuestion, type ShopClip } from '../utils/clipShopping';
+import { resolveClipQuestion, shopClipTitle, type ShopClip } from '../utils/clipShopping';
 import { captureClipFrames, type ShoppingFrame } from '../utils/captureClipFrames';
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
 import type { GiftMessage, GiftProduct, PendingPurchase } from '../shared/gifting';
@@ -33,7 +33,7 @@ const NO_EXCLUDED_SHOPS: string[] = [];
 
 export interface ShopChatHandle { ask: (question: string) => void }
 
-export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGift, onBuy, purchaseBusy = false, excludedShopDomains = NO_EXCLUDED_SHOPS, clips = NO_CLIPS, selectedClipId, purchaseBlockReason = '', onReviewCart, pendingPurchase, embedded = false, controllerRef, onBusyChange, compact = false }: {
+export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGift, onBuy, purchaseBusy = false, excludedShopDomains = NO_EXCLUDED_SHOPS, clips = NO_CLIPS, purchaseBlockReason = '', onReviewCart, pendingPurchase, embedded = false, controllerRef, onBusyChange, compact = false }: {
   embedded?: boolean;
   compact?: boolean;
   controllerRef?: Ref<ShopChatHandle>;
@@ -46,7 +46,6 @@ export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGi
   purchaseBusy?: boolean;
   excludedShopDomains?: string[];
   clips?: ShopClip[];
-  selectedClipId?: string;
   purchaseBlockReason?: string;
   onReviewCart?: () => void;
   pendingPurchase?: PendingPurchase | null;
@@ -83,10 +82,10 @@ export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGi
   async function ask(value = question) {
     const text = value.trim();
     if (!text || pending.current) return;
-    pending.current = true; setBusy(true); setError(''); setProducts([]); setNotices([]);
+    pending.current = true; setBusy(true); setError(''); setProducts([]); setNotices([]); setShoppingClip(null);
     const controller = new AbortController(); request.current = controller;
     try {
-      const target = resolveClipQuestion(text, clips, selectedClipId);
+      const target = resolveClipQuestion(text, clips);
       setShoppingClip(target?.clip || null);
       setQuestion('');
       setStatus(target ? 'Looking at the saved clip…' : 'Looking at the stream…');
@@ -138,7 +137,7 @@ export function StreamShopChat({ roomId, isLive, sources, capture, canGift, onGi
     {compact && turns.length === 0 && <p className="text-xs text-slate-500">Ask <span className="font-semibold text-violet-700">@shop</span> about the live stream or a saved clip.</p>}
     {sources.length > 1 && <label className="block text-xs text-slate-600">Look at <select aria-label="Stream to inspect" disabled={busy} value={activeSource} onChange={e => setSourceId(e.target.value)} className="ml-2 rounded-lg border p-1.5">{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</select></label>}
     {(compact ? turns.slice(-1) : turns).map((turn, index) => <div key={index} className="space-y-2 text-sm"><p className="rounded-xl bg-violet-50 p-3 text-violet-950">{turn.question}</p><p className="rounded-xl bg-slate-50 p-3 text-slate-700">{turn.answer}</p></div>)}
-    {shoppingClip && <p className="text-xs text-slate-500">Inspecting saved clip {shoppingClip.id.slice(0, 8)} · three sampled frames.</p>}
+    {shoppingClip && <p className="text-xs text-slate-500">Inspecting saved clip “{shopClipTitle(shoppingClip)}” · three sampled frames.</p>}
     {error && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">{error}</p>}
     {notices.map((notice, index) => <div key={index} className="rounded-lg bg-amber-50 p-2 text-xs text-amber-950"><p>{notice.content}</p>{notice.links.map(link => <a key={link.href} href={link.href} target="_blank" rel="noreferrer" className="mr-2 underline">{link.label}</a>)}{notice.images.map(image => <img key={image.url} src={image.url} alt={image.alt} className="mt-2 max-h-32" />)}</div>)}
     {visibleProducts.length > 0 && purchaseBlockReason && <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-950"><p>{purchaseBlockReason}</p>{onReviewCart && <button type="button" onClick={onReviewCart} className="mt-1 font-semibold underline">Open cart</button>}</div>}
