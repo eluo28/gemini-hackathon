@@ -4,8 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
-    "dev:telemetry": "CLIP_TELEMETRY=1 tsx server.ts",
+    "dev": "tsx watch server.ts",
+    "dev:telemetry": "CLIP_TELEMETRY=1 tsx watch server.ts",
     "start": "tsx server.ts",
     "build": "npm run check:media && vite build",
     "preview": "vite preview",
