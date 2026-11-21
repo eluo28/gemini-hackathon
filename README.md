@@ -80,3 +80,35 @@ retries, and does not follow redirects or accept a caller-selected endpoint.
 This is catalog infrastructure only. Buyer OAuth, session-owned carts, purchase
 confirmation and completion, and verified creator-recipient shipping remain to
 be implemented. There is no payment endpoint in this change.
+
+## Gemini item detection
+
+`POST /api/shop/detect-items` analyzes one to three compressed frames from a live
+stream or clip. Configure `GEMINI_API_KEY` in server secrets; optionally override
+`GEMINI_ITEM_MODEL` (default `gemini-3.8-flash`). Missing credentials return a clear
+503 without preventing the rest of the app from starting.
+
+Request shape: `{ "frames": [{ "mimeType": "image/jpeg", "data": "<base64 image bytes, without data-URL prefix>", "timestampSec": 12.5 }] }`.
+JPEG, PNG, and WebP are supported, up to 500,000 base64 characters per frame and
+three frames per request. Timestamp is optional and supplied by the caller.
+Compress/resize frames before sending them. The request body limit is 2 MB.
+
+The result has `{ items, model }`. Each item includes its source frame index,
+caller-supplied timestamp when present, visible description/evidence, nullable
+brand/model, a Shop search phrase, and a bounding box `[top,left,bottom,right]`
+normalized to 0..1000. Results are discovery candidates (`matchType: "similar"`),
+not verified product matches. Gemini is instructed to report brands/models only
+when readable, ignore instructions inside images, and return no items for unclear
+scenes. Output is validated again on the server. No prices or catalog IDs are
+accepted from Gemini.
+
+Pass an item's `searchQuery` to `/api/shop/search` as `catalog.query`, with the
+buyer's country/currency context. Verify returned products and exact options before
+presenting a match or adding to cart. Detection does not create carts or purchases.
+
+Frames and model responses are not saved or logged by this app. The SDK sends the
+frames to Google for inference. Calls have a 20-second timeout with automatic SDK
+retries disabled. The endpoint allows five valid requests per IP per minute and
+two concurrent analyses per server process. These are prototype, process-local
+limits. Live-frame capture, clip-trigger wiring, automatic scheduling, and product
+cards are not connected yet; this endpoint is ready for those consumers.

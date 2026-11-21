@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { createItemDetectionRouter } from './src/server/itemDetectionRoutes';
 import { createShopRouter } from './src/server/shopRoutes';
 import { getStreamer, saveStreamer } from './src/server/streamerProfiles';
 import express from 'express';
@@ -175,6 +176,7 @@ async function startServer() {
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     next();
   });
+  app.use('/api/shop', createItemDetectionRouter());
   app.use(express.json({ limit: '256kb' }));
   app.use('/api/shop', createShopRouter());
 
