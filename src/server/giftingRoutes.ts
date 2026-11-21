@@ -51,7 +51,15 @@ export function createGiftingRouter(service: GiftingService = createGiftingServi
         finally { session.busy = false; }
       } catch (error) {
         if (error instanceof GiftError || error instanceof ShopOAuthError) { res.status(error.status).json({ error: error.message, ...(session ? { state: service.view(session) } : {}) }); return; }
-        if (error instanceof ShopMcpError) { res.status(error.status).json({ error: `${error.message} ${error.code === 'shop_access_denied' ? 'Reconnect Shop when ready.' : 'Refresh the status before retrying a cart or checkout.'}`, code: error.code, ...(session ? { state: service.view(session) } : {}) }); return; }
+        if (error instanceof ShopMcpError) {
+          const catalogRequest = path === '/search' || path === '/product';
+          const message = error.code === 'shop_invalid_country' ? error.message
+            : error.code === 'shop_access_denied' ? 'Your Shop connection needs attention. Reconnect Shop when ready.'
+            : catalogRequest ? `Shop product ${path === '/search' ? 'search' : 'lookup'} ${error.code === 'shop_timeout' ? 'timed out' : 'is temporarily unavailable'}. Try again later.`
+            : `${error.message} Refresh the status before retrying a cart or checkout.`;
+          res.status(error.status).json({ error: message, code: error.code, ...(session ? { state: service.view(session) } : {}) });
+          return;
+        }
         res.status(502).json({ error: 'Shop gifting is temporarily unavailable. Refresh the status before trying another purchase.', ...(session ? { state: service.view(session) } : {}) });
       }
     });

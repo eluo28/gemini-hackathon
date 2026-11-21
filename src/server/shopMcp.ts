@@ -7,8 +7,8 @@ export type ShopTool = CatalogTool | 'get_account' | 'create_cart' | 'get_cart' 
 export type ShopDocument = Record<string, unknown>;
 
 export class ShopMcpError extends Error {
-  constructor(public readonly code: string, public readonly status: number) {
-    super('Shop could not complete this request.');
+  constructor(public readonly code: string, public readonly status: number, message = 'Shop could not complete this request.') {
+    super(message);
   }
 }
 
@@ -59,6 +59,16 @@ export function createShopMcpClient(fetcher: typeof fetch = fetch, timeoutMs = 1
       try { envelope = await response.json(); }
       catch { throw new ShopMcpError('shop_invalid_response', 502); }
       if (envelope?.error || envelope?.result?.isError) {
+        // Classify this known validation failure without exposing arbitrary
+        // upstream text, request payloads, tokens, or recipient addresses.
+        const detail = String(envelope?.error?.message || '') + (Array.isArray(envelope?.result?.content)
+          ? envelope.result.content.filter((part: { type?: string }) => part.type === 'text').map((part: { text?: string }) => part.text || '').join(' ') : '');
+        if (['search_catalog', 'lookup_catalog', 'get_product'].includes(tool)
+          && detail.includes('context.address_country') && detail.includes('not a recognized')) {
+          const country = detail.match(/["']([A-Z]{2})["']/)?.[1];
+          throw new ShopMcpError('shop_invalid_country', 400,
+            `Shop rejected the streamer's delivery country${country ? ` (${country})` : ''}. Update the country in Edit profile; use US for a United States address.`);
+        }
         throw new ShopMcpError('shop_tool_error', 502);
       }
       const document = envelope?.result?.structuredContent;
