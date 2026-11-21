@@ -458,10 +458,9 @@ verified streamer destination generates a room-wide gift alert. Personal orders
 never generate gift alerts. Live in-app payment completion has not been verified.
 
 Shop can require a merchant-hosted step or reject a delivery destination. The UI
-preserves notices and links to the returned merchant checkout. Stores confirmed
-to require merchant checkout are hidden from subsequent discovery in that
-browser. This is a learned exclusion, not a guarantee that new stores support
-in-app completion: search does not expose a reliable checkout-eligibility filter.
+preserves notices and links to the returned merchant checkout. Products remain
+eligible to appear in discovery even when their store requires merchant checkout.
+Search does not expose a reliable checkout-eligibility filter.
 
 Cart quantities can change before payment or merchant handoff, invalidating the
 old checkout review. Opening merchant checkout locks parallel in-app payment and

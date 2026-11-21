@@ -31,20 +31,11 @@ function Notices({ messages }: { messages: GiftMessage[] }) {
 const EMPTY_PRODUCTS: GiftProduct[] = [];
 type ShoppingActions = { add: (product: GiftProduct, mode: PurchaseMode) => void; busy: boolean; pending: PendingPurchase | null; blockedReason: string; reviewCart: () => void };
 
-export function GiftPanel({ roomId, recipient, initialProducts = EMPTY_PRODUCTS, chat, onClose, compact = false, onConnectionChange, onMerchantCheckoutRequired }: { roomId: string; recipient: string; initialProducts?: GiftProduct[]; chat?: ReactNode | ((actions: ShoppingActions) => ReactNode); onClose?: () => void; compact?: boolean; onConnectionChange?: (connected: boolean) => void; onMerchantCheckoutRequired?: (shop: string) => void }) {
+export function GiftPanel({ roomId, recipient, initialProducts = EMPTY_PRODUCTS, chat, onClose, compact = false, onConnectionChange }: { roomId: string; recipient: string; initialProducts?: GiftProduct[]; chat?: ReactNode | ((actions: ShoppingActions) => ReactNode); onClose?: () => void; compact?: boolean; onConnectionChange?: (connected: boolean) => void }) {
   useEffect(() => () => { onConnectionChange?.(false); }, [onConnectionChange]);
   const [cartOpen, setCartOpen] = useState(!chat);
   const [state, setState] = useState<GiftView | null>(null);
   useEffect(() => { onConnectionChange?.(Boolean(state?.connected)); }, [state?.connected, onConnectionChange]);
-  const merchantCheckoutRequired = state?.checkout?.status === 'requires_escalation'
-    || Boolean(state?.messages.some(message => message.code === 'checkout_completion_ineligible'
-      || message.content === 'An extension interaction is required to complete the checkout.'
-      || message.content.startsWith('This checkout is ineligible for completion via API.')
-      || /interazione con l.estensione/i.test(message.content)));
-  const checkoutShop = state?.cart?.shop;
-  useEffect(() => {
-    if (merchantCheckoutRequired && checkoutShop) onMerchantCheckoutRequired?.(checkoutShop);
-  }, [merchantCheckoutRequired, checkoutShop, onMerchantCheckoutRequired]);
   const [products, setProducts] = useState<GiftProduct[]>(initialProducts);
   const [searchNotices, setSearchNotices] = useState<GiftMessage[]>([]);
   const [connecting, setConnecting] = useState(false);

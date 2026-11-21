@@ -4,7 +4,7 @@ import { StreamShopChat, type ShopChatHandle } from './components/StreamShopChat
 import type { StreamCaptureHandle } from './components/LiveStage';
 import type { StreamerProfile } from './shared/protocol';
 const GiftPanel = lazy(() => import('./components/GiftPanel').then(module => ({ default: module.GiftPanel })));
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { AutoClipper, LiveClipsPanel, MyClipsPage } from './components/AutoClipper';
 import { ClipGenPage } from './components/ClipGenPage';
 import { Viewer3DPage } from './components/Viewer3DPage';
@@ -64,18 +64,6 @@ function StudioApp() {
   const [streamer, setStreamer] = useState<StreamerProfile | null>(null);
   const [shopDraft, setShopDraft] = useState<{ id: string; text: string }>();
   const [shopConnected, setShopConnected] = useState(false);
-  const [excludedShopDomains, setExcludedShopDomains] = useState<string[]>(() => {
-    try {
-      const saved: unknown = JSON.parse(localStorage.getItem('shop-merchant-checkout-exclusions') || '[]');
-      return Array.isArray(saved) ? saved.filter((shop): shop is string => typeof shop === 'string' && /^[a-z0-9.-]+$/.test(shop)).slice(-100) : [];
-    } catch { return []; }
-  });
-  const excludeMerchantCheckout = useCallback((shop: string) => {
-    setExcludedShopDomains(previous => previous.includes(shop) ? previous : [...previous, shop].slice(-100));
-  }, []);
-  useEffect(() => {
-    try { localStorage.setItem('shop-merchant-checkout-exclusions', JSON.stringify(excludedShopDomains)); } catch { /* In-memory filtering still applies. */ }
-  }, [excludedShopDomains]);
   const [shopBusy, setShopBusy] = useState(false);
   useEffect(() => { setShopBusy(false); }, [studio.roomId]);
   const currentStreamer = streamer?.roomId === studio.roomId ? streamer : null;
@@ -270,8 +258,8 @@ function StudioApp() {
             shopConnected={shopConnected}
             onShopQuestion={question => shopRef.current?.ask(question)}
             shoppingPanel={<Suspense fallback={<p className="p-3 text-xs">Opening Shop…</p>}>
-              <GiftPanel compact onMerchantCheckoutRequired={excludeMerchantCheckout} onConnectionChange={setShopConnected} roomId={studio.roomId} recipient={currentStreamer?.displayName || 'the streamer'}
-                chat={({ add, busy: purchaseBusy, pending: pendingPurchase, blockedReason, reviewCart }) => <StreamShopChat roomId={studio.roomId} clips={clipper.queue} excludedShopDomains={excludedShopDomains} purchaseBlockReason={blockedReason} onReviewCart={reviewCart} pendingPurchase={pendingPurchase} purchaseBusy={purchaseBusy} compact embedded controllerRef={shopRef} onBusyChange={setShopBusy} isLive={studio.isLive}
+              <GiftPanel compact onConnectionChange={setShopConnected} roomId={studio.roomId} recipient={currentStreamer?.displayName || 'the streamer'}
+                chat={({ add, busy: purchaseBusy, pending: pendingPurchase, blockedReason, reviewCart }) => <StreamShopChat roomId={studio.roomId} clips={clipper.queue} purchaseBlockReason={blockedReason} onReviewCart={reviewCart} pendingPurchase={pendingPurchase} purchaseBusy={purchaseBusy} compact embedded controllerRef={shopRef} onBusyChange={setShopBusy} isLive={studio.isLive}
                   sources={studio.participants.filter(p => p.role !== 'viewer' && (p.videoEnabled || p.screenSharing)).map(p => ({ id: p.id, name: p.name }))}
                   capture={sourceId => { if (!captureRef.current) throw new Error('The stream is still connecting.'); return captureRef.current.capture(sourceId); }}
                   canGift={Boolean(currentStreamer?.giftingEnabled)} onGift={product => add(product, 'gift')} onBuy={product => add(product, 'self')} />} />
