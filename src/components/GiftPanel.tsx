@@ -58,20 +58,38 @@ export function GiftPanel({ roomId, recipient, initialProducts = [], onClose }: 
   useEffect(() => {
     if (!connection) return;
     let active = true;
+    let polling = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
-      if (!active) return;
+      if (!active || polling) return;
+      clearTimeout(timer);
       if (Date.now() >= connection.expiresAt) { setConnection(null); setError('Shop sign-in expired. Connect again when ready.'); return; }
       if (busyRef.current) { timer = setTimeout(poll, connection.interval * 1000); return; }
+      polling = true;
       try {
         const result = await api<{status: string; interval: number}>('/connection/poll', {});
         if (!active) return;
-        if (result.status === 'connected') { setConnection(null); const view = await api<GiftView>('/state'); if (active) setState(view); }
+        if (result.status === 'connected') {
+          const view = await api<GiftView>('/state');
+          if (!active) return;
+          // Clearing connection tears this effect down. Publish the connected
+          // state first so cleanup cannot discard the awaited response.
+          setState(view);
+          setConnection(null);
+        }
         else timer = setTimeout(poll, result.interval * 1000);
       } catch (e) { if (active) { setConnection(null); setError(e instanceof Error ? e.message : 'Shop sign-in failed.'); } }
+      finally { polling = false; }
     };
+    const onReturn = () => { if (!document.hidden) void poll(); };
+    window.addEventListener('focus', onReturn);
+    document.addEventListener('visibilitychange', onReturn);
     timer = setTimeout(poll, connection.interval * 1000);
-    return () => { active = false; clearTimeout(timer); };
+    return () => {
+      active = false; clearTimeout(timer);
+      window.removeEventListener('focus', onReturn);
+      document.removeEventListener('visibilitychange', onReturn);
+    };
   }, [connection]);
 
   const update = (path: string, body: unknown = {}) => run(async () => { const view = await api<GiftView>(path, body); if (mounted.current) setState(view); });
