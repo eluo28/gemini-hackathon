@@ -13,7 +13,7 @@ function Notices({ messages }: { messages: GiftMessage[] }) {
     && JSON.stringify(messages.slice(0, midpoint)) === JSON.stringify(messages.slice(midpoint))
     ? messages.slice(0, midpoint) : messages;
   return <>{visible.map((message, i) => <div key={i} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-    <p>{message.content === 'An extension interaction is required to complete the checkout.' ? 'This store requires a step on its checkout page.' : message.content}</p>
+    <p>{message.code === 'checkout_completion_ineligible' || message.content.startsWith('This checkout is ineligible for completion via API.') ? 'Complete this purchase on the merchant’s checkout page. Your cart is ready to review there.' : message.content === 'An extension interaction is required to complete the checkout.' ? 'This store requires a step on its checkout page.' : message.content}</p>
     {message.links.map(link => <a key={link.href} href={link.href} target="_blank" rel="noreferrer" className="mr-3 underline">{link.label}</a>)}
     {message.images.map(image => <img key={image.url} src={image.url} alt={image.alt} className="mt-2 max-h-40" />)}
   </div>)}</>;
@@ -149,7 +149,7 @@ export function GiftPanel({ roomId, recipient, onClose }: { roomId: string; reci
         {checkout.delivery.map(group => <label key={`${group.methodKey}-${group.groupKey}`} className="block text-sm">Delivery option<select disabled={busy || checkout.completionAttempted || hosted} value={group.selected || ''} onChange={e => void update('/delivery', { methodKey: group.methodKey, groupKey: group.groupKey, optionKey: e.target.value })} className="ml-2 rounded border p-2"><option value="" disabled>Choose delivery</option>{group.options.map(option => <option key={option.key} value={option.key}>{option.label}{option.amount !== undefined ? ` · ${giftMoney(option.amount, checkout.currency)}` : ''}</option>)}</select></label>)}
         {checkout.totals.map((total, i) => <p key={i} className="text-sm font-medium">{total.label}: {giftMoney(total.amount, checkout.currency)}</p>)}
         <div className="flex flex-wrap gap-3 text-xs">{checkout.links.map(link => <a key={link.href} href={link.href} target="_blank" rel="noreferrer" className="underline">{link.label}</a>)}</div>
-        {!checkout.recipientVerified && !checkout.giftConfirmed && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">Shop has not confirmed the streamer’s shipping destination. In-app payment is disabled. If you continue on Shop, verify the recipient before paying.</p>}
+        {!checkout.recipientVerified && !checkout.giftConfirmed && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-950">We couldn’t verify that checkout kept the streamer’s saved address. Before paying on the merchant’s checkout page, check that the recipient and delivery address are correct.</p>}
         {checkout.status === 'ready_for_complete' && checkout.recipientVerified && !checkout.completionAttempted && !hosted && <>
           <label className="block text-sm">Payment method<select value={instrument} onChange={e => { setInstrument(e.target.value); setConfirmed(false); }} disabled={busy} className="ml-2 rounded border p-2"><option value="">Choose payment method</option>{checkout.instruments.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}</select></label>
           <label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} disabled={busy} />I confirm this store, the items and quantities, the displayed total, the recipient, and my chosen payment method.</label>
@@ -163,7 +163,7 @@ export function GiftPanel({ roomId, recipient, onClose }: { roomId: string; reci
             try { const result = await api<{url:string}>('/handoff', {}); setHandoffOpened(true); if (popup) { popup.opener = null; popup.location.href = result.url; } else window.location.assign(result.url); }
             catch (e) { popup?.close(); throw e; }
           });
-        }} className="block text-sm font-semibold underline">{checkout.status === 'requires_escalation' ? 'Finish required step on Shop' : 'Review and pay on Shop instead'}</button>}
+        }} className="block text-sm font-semibold underline">{checkout.status === 'requires_escalation' ? 'Continue to merchant checkout' : 'Review and pay on merchant checkout instead'}</button>}
       </div>}
       {(state.cart || checkout || state.uncertainWrite) && <div className="flex flex-wrap gap-4 text-sm">
         <button disabled={busy} onClick={() => void update('/refresh')} className="rounded-lg border px-3 py-2 disabled:opacity-40">Refresh gift status</button>
