@@ -120,3 +120,22 @@ export type ServerWsMessage =
   | { type: 'media:frame'; fromId: string; frame: string }
   | { type: 'media:audio'; fromId: string; pcm16: string; sampleRate: number }
   | { type: 'error'; reason: string };
+
+/** Public creator metadata only. Never add shipping addresses or Shop tokens. */
+export interface StreamerProfile {
+  id: string;
+  roomId: string;
+  displayName: string;
+  handle: string;
+  bio: string;
+  initials: string;
+  hasShippingAddress: boolean;
+  giftingEnabled: boolean;
+  /** Exact product selections will be added after Shop catalog verification. */
+  wishlist: { productId: string; variantId: string; shop: string }[];
+}
+
+export interface RoomStreamerResponse {
+  streamer: StreamerProfile | null;
+  canEdit: boolean;
+}

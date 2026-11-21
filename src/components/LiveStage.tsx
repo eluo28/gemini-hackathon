@@ -26,6 +26,7 @@ import type {
   RoomSummary,
   StreamCategory,
 } from '../utils/types';
+import type { RoomStreamerResponse, StreamerProfile } from '../shared/protocol';
 import type { MediaDeviceOption, StudioProfile } from '../hooks/useStudioRoom';
 
 interface VideoTileProps {
@@ -287,6 +288,71 @@ export function LiveStage({
   onReportAudioBlocked,
   onTriggerClipMark,
 }: LiveStageProps) {
+  const [streamer, setStreamer] = useState<StreamerProfile | null>(null);
+
+  const [canEditProfile, setCanEditProfile] = useState(false);
+  const [profileFormOpen, setProfileFormOpen] = useState(false);
+  const [profileError, setProfileError] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const emptyAddress = { recipient: '', street: '', city: '', region: '', postalCode: '', country: '' };
+  const [profileDraft, setProfileDraft] = useState({ displayName: '', handle: '', bio: '', shippingAddress: emptyAddress });
+
+  const openProfileForm = async () => {
+    setProfileError('');
+    setProfileDraft({ displayName: streamer?.displayName || selfName, handle: streamer?.handle || '', bio: streamer?.bio || '', shippingAddress: { ...emptyAddress } });
+    if (streamer) {
+      try {
+        const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/streamer/settings`);
+        if (!response.ok) throw new Error('Could not load your profile settings.');
+        const data = await response.json();
+        setProfileDraft(draft => ({ ...draft, shippingAddress: data.shippingAddress || { ...emptyAddress } }));
+      } catch {
+        setProfileError('Could not load your profile settings. Try again.');
+        return;
+      }
+    }
+    setProfileFormOpen(true);
+  };
+
+  const saveProfile = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const targetRoom = roomId;
+    setSavingProfile(true);
+    setProfileError('');
+    try {
+      const response = await fetch(`/api/rooms/${encodeURIComponent(targetRoom)}/streamer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(profileDraft),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not save profile.');
+      setStreamer(data.streamer);
+      setCanEditProfile(data.canEdit);
+      setProfileFormOpen(false);
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : 'Could not save profile.');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setStreamer(null);
+    setCanEditProfile(false);
+    setProfileFormOpen(false);
+    setProfileError('');
+    void fetch(`/api/rooms/${encodeURIComponent(roomId)}/streamer`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Could not load streamer');
+        const data: RoomStreamerResponse = await response.json();
+        if (!controller.signal.aborted) { setStreamer(data.streamer); setCanEditProfile(data.canEdit); }
+      })
+      .catch(() => {
+        // The stage remains usable if creator metadata cannot be loaded.
+      });
+    return () => controller.abort();
+  }, [roomId]);
+
   const [editingMeta, setEditingMeta] = useState(false);
   const [showDevices, setShowDevices] = useState(false);
   const [titleDraft, setTitleDraft] = useState(roomTitle);
@@ -498,6 +564,59 @@ export function LiveStage({
           </p>
         </div>
       </div>
+
+      {streamer && streamer.roomId === roomId && (
+        <section aria-label="About the streamer" className="mx-5 md:mx-7 mb-4 rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div aria-hidden="true" className="flex h-11 w-11 items-center justify-center rounded-full bg-violet-100 text-sm font-bold text-violet-800">
+              {streamer.initials}
+            </div>
+            <div className="flex-1">
+              <h2 className="text-sm font-semibold text-slate-950">{streamer.displayName}</h2>
+              <p className="text-xs text-slate-500">{streamer.handle}</p>
+            </div>
+            {selfRole === 'host' && canEditProfile && (
+              <button type="button" onClick={() => void openProfileForm()} className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold">Edit profile</button>
+            )}
+            <button type="button" disabled aria-describedby="gifting-status" className="rounded-xl bg-slate-100 px-4 py-2 text-xs font-semibold text-slate-400 cursor-not-allowed">
+              Gift to {streamer.displayName}
+            </button>
+          </div>
+          <p className="mt-3 text-sm text-slate-600">{streamer.bio}</p>
+          <p id="gifting-status" className="mt-2 text-xs text-slate-500">Gifting is coming soon.</p>
+        </section>
+      )}
+
+      {!streamer && selfRole === 'host' && canEditProfile && !profileFormOpen && (
+        <div className="mx-5 md:mx-7 mb-4 rounded-2xl border border-slate-200 bg-white p-4">
+          <p className="mb-3 text-sm text-slate-600">Add your creator profile and a delivery address for future gifts.</p>
+          <button type="button" onClick={() => void openProfileForm()} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white">Set up creator profile</button>
+        </div>
+      )}
+      {profileError && <p role="alert" className="mx-5 md:mx-7 mb-3 text-sm text-rose-700">{profileError}</p>}
+      {profileFormOpen && selfRole === 'host' && (
+        <form onSubmit={saveProfile} aria-label="Creator profile" className="mx-5 md:mx-7 mb-4 rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+          <h2 className="text-base font-semibold">Your creator profile</h2>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm">Display name<input required maxLength={60} value={profileDraft.displayName} onChange={e => setProfileDraft({ ...profileDraft, displayName: e.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
+            <label className="text-sm">Handle<input required maxLength={31} placeholder="@yourname" value={profileDraft.handle} onChange={e => setProfileDraft({ ...profileDraft, handle: e.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
+          </div>
+          <label className="block text-sm">Bio<textarea maxLength={500} value={profileDraft.bio} onChange={e => setProfileDraft({ ...profileDraft, bio: e.target.value })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
+          <fieldset className="space-y-3">
+            <legend className="text-sm font-semibold">Gift delivery address (optional)</legend>
+            <p className="text-xs text-slate-500">Saved privately for gift delivery. This does not enable gifting yet.</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {([['recipient', 'Recipient name'], ['street', 'Street address'], ['city', 'City'], ['region', 'State / region'], ['postalCode', 'Postal code'], ['country', 'Country code (e.g. US)']] as const).map(([key, label]) => (
+                <label key={key} className="text-sm">{label}<input maxLength={key === 'country' ? 2 : 200} value={profileDraft.shippingAddress[key]} onChange={e => setProfileDraft({ ...profileDraft, shippingAddress: { ...profileDraft.shippingAddress, [key]: key === 'country' ? e.target.value.toUpperCase() : e.target.value } })} className="mt-1 block w-full rounded-lg border border-slate-200 p-2" /></label>
+              ))}
+            </div>
+          </fieldset>
+          <div className="flex gap-3">
+            <button disabled={savingProfile} type="submit" className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{savingProfile ? 'Saving…' : 'Save profile'}</button>
+            <button disabled={savingProfile} type="button" onClick={() => { setProfileFormOpen(false); setProfileError(''); }} className="rounded-xl border border-slate-200 px-4 py-2 text-sm">Cancel</button>
+          </div>
+        </form>
+      )}
 
       {/* Inline Stream Info Editor */}
       {editingMeta && (

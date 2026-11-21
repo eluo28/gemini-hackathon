@@ -37,3 +37,20 @@
 - `npm run lint` — TypeScript strict type-check (`tsc --noEmit`)
 - `npm run build` — Production client bundle (`vite build`)
 - `npm start` — Run production server (`NODE_ENV=production node server.ts`)
+
+
+## Creator profile setup
+
+Join as a host and select **Set up creator profile** above the stage. Add your
+name, handle, bio, and optional gift delivery address, then save. No profiles or
+addresses are preloaded. Use **Edit profile** in the same browser to change it.
+
+Profiles persist across server restarts in ignored `.data/streamers.json`
+(override the directory with `PROFILE_DATA_DIR`). Addresses stay on the server;
+public profile responses and room broadcasts never include them. The private
+settings endpoint requires the creator ownership cookie. This prototype uses
+first-claim, browser-cookie ownership, not verified creator accounts; add actual
+creator authentication before a public launch or real gifting.
+
+Gifting remains disabled until Shop MCP recipient checkout is implemented and
+verified. Saving an address does not activate purchases.

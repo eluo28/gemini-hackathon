@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { getStreamer, saveStreamer } from './src/server/streamerProfiles';
 import express from 'express';
 import http from 'node:http';
 import path from 'node:path';
@@ -21,6 +22,7 @@ import type {
   CreateRoomResponse,
   HealthResponse,
   RoomsListResponse,
+  RoomStreamerResponse,
   ServerWsMessage,
 } from './src/shared/protocol';
 import type {
@@ -198,6 +200,64 @@ async function startServer() {
       });
     const response: RoomsListResponse = { rooms: list };
     res.json(response);
+  });
+
+  // Demo profile ownership is tied to an HttpOnly browser cookie. Production
+  // onboarding must bind this to an authenticated creator account.
+  const profileOwner = (req: express.Request): string | null => {
+    const cookie = req.headers.cookie?.split(';').map(part => part.trim())
+      .find(part => part.startsWith('creator_owner='))?.slice('creator_owner='.length);
+    return cookie && /^[a-f0-9]{64}$/.test(cookie) ? cookie : null;
+  };
+
+  app.get('/api/rooms/:roomId/streamer', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const entry = getStreamer(req.params.roomId);
+    const payload: RoomStreamerResponse = {
+      streamer: entry?.profile || null,
+      canEdit: !entry || entry.owner === profileOwner(req),
+    };
+    res.json(payload);
+  });
+
+  app.get('/api/rooms/:roomId/streamer/settings', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const entry = getStreamer(req.params.roomId);
+    if (!entry || entry.owner !== profileOwner(req)) {
+      res.status(403).json({ error: 'Only the browser that created this profile can edit it.' });
+      return;
+    }
+    res.json({ shippingAddress: entry.shippingAddress });
+  });
+
+  app.post('/api/rooms/:roomId/streamer', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(req.params.roomId)) {
+      res.status(400).json({ error: 'Invalid room.' });
+      return;
+    }
+    const origin = req.get('origin');
+    if (origin && origin !== `${req.protocol}://${req.get('host')}` && origin !== process.env.APP_URL) {
+      res.status(403).json({ error: 'Profile changes must come from this app.' });
+      return;
+    }
+    const entry = getStreamer(req.params.roomId);
+    const owner = profileOwner(req) || crypto.randomBytes(32).toString('hex');
+    if (entry && entry.owner !== owner) {
+      res.status(403).json({ error: 'Only the browser that created this profile can edit it.' });
+      return;
+    }
+    try {
+      const streamer = saveStreamer(req.params.roomId, owner, req.body);
+      res.cookie('creator_owner', owner, {
+        httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production',
+        maxAge: 30 * 24 * 60 * 60 * 1000, path: '/',
+      });
+      res.json({ streamer, canEdit: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not save profile.';
+      res.status(400).json({ error: message.startsWith('Enter ') || message.startsWith('Complete ') ? message : 'Could not save profile. Please try again.' });
+    }
   });
 
   app.post('/api/rooms', (req, res) => {
