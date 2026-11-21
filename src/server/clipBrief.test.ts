@@ -8,13 +8,16 @@ import { DEFAULT_RULES, type ClipRequest, type ClipResult } from '../shared/clip
 const media = Buffer.from('private-video-bytes');
 const request: ClipRequest = { stage: 'judge', resolution: 'medium', durationSec: 60, targetSeconds: 60, media: '', rules: DEFAULT_RULES, query: 'the failed comeback', chat: [{ name: 'A', text: 'outside', offsetSec: 1 }, { name: 'B', text: 'wow', offsetSec: 20 }] };
 const result: ClipResult = { answers: {}, durationSec: 45, sourceOffsetSec: 15, trim: { start: 0, end: 45 }, inspection: { request: {}, response: {}, elapsedMs: 1 } };
-const brief = { summary: 'A comeback fails.', intent: 'Show the failed comeback and reaction.', relevant: true, beats: [{ start: 4, end: 32, description: 'Attempt, failure, and reaction.' }] };
+const brief = { title: 'The comeback falls short', description: 'A comeback attempt fails, followed by an immediate reaction.', summary: 'A comeback fails.', intent: 'Show the failed comeback and reaction.', relevant: true, beats: [{ start: 4, end: 32, description: 'Attempt, failure, and reaction.' }] };
 const response = (value: unknown) => ({ candidates: [{ finishReason: FinishReason.STOP }], text: JSON.stringify(value), usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20 } });
 
 test('Hydrogen receives the query, normalized video and aligned chat, and returns a timestamped brief', async () => {
   const output = await createClipBriefer({ generate: async payload => {
     assert.equal(payload.model, 'gemini-4-hydrogen');
     assert.equal(payload.config?.responseMimeType, 'application/json');
+    const schema = payload.config?.responseJsonSchema as { required: string[] };
+    assert.ok(schema.required.includes('title'));
+    assert.ok(schema.required.includes('description'));
     const parts = (payload.contents as any)[0].parts;
     assert.equal(parts[0].inlineData.data, media.toString('base64'));
     const context = JSON.parse(parts[1].text);
@@ -23,8 +26,21 @@ test('Hydrogen receives the query, normalized video and aligned chat, and return
     return response(brief);
   } })(request, media, result);
   assert.deepEqual(output.brief.beats, brief.beats);
+  assert.equal(output.brief.title, brief.title);
+  assert.equal(output.brief.description, brief.description);
   assert.equal(output.brief.usage?.candidatesTokenCount, 20);
   assert.equal(JSON.stringify(output.inspection).includes(media.toString('base64')), false);
+});
+
+test('clip annotations require a bounded title and description and trim whitespace', () => {
+  for (const key of ['title', 'description'] as const) {
+    for (const value of [undefined, null, 123, '', '   ', 'x'.repeat(key === 'title' ? 121 : 1001)]) {
+      assert.throws(() => validateBrief({ ...brief, [key]: value }, 45));
+    }
+  }
+  const cleaned = validateBrief({ ...brief, title: ` ${brief.title} `, description: ` ${brief.description}\n` }, 45);
+  assert.equal(cleaned.title, brief.title);
+  assert.equal(cleaned.description, brief.description);
 });
 
 test('brief validation rejects malformed or out-of-window evidence and unsupported queries', async () => {

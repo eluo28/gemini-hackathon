@@ -10,7 +10,7 @@ const request: ClipRequest = { stage: 'judge', resolution: 'medium', durationSec
   { name: 'A', text: 'outside', offsetSec: 2 }, { name: 'B', text: 'reaction', offsetSec: 20 },
 ] };
 const result: ClipResult = { answers: {}, durationSec: 45, sourceOffsetSec: 15, trim: { start: 10, end: 30 }, inspection: { request: {}, response: {}, elapsedMs: 1 } };
-const briefData = { summary: 'An attempted comeback fails.', intent: 'Show the failure and reaction.', relevant: true, beats: [{ start: 4, end: 32, description: 'Setup, failed attempt, and reaction.' }] };
+const briefData = { title: 'The comeback falls short', description: 'A comeback attempt fails, followed by an immediate reaction.', summary: 'An attempted comeback fails.', intent: 'Show the failure and reaction.', relevant: true, beats: [{ start: 4, end: 32, description: 'Setup, failed attempt, and reaction.' }] };
 const briefer = createClipBriefer({ generate: async () => ({ candidates: [{ finishReason: FinishReason.STOP }], text: JSON.stringify(briefData) }) });
 const response = () => ({ candidates: [{ finishReason: FinishReason.STOP }], functionCalls: [{ name: 'trim_clip', args: { start: 4.25, end: 31.75, reason: 'Keep the setup through the reaction.' } }], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20 } });
 

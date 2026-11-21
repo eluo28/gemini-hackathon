@@ -48,7 +48,7 @@ export function createClipRouter(judge = createClipAnalyzer(), normalize = norma
         const c=request.capture;
         if(shouldEditClip(request,result.answers)) {
           const trimmed=await clipSpan('media.trim', { trim: result.trim }, () => normalize(normalized.media,normalized.durationSec,result.trim));
-          result.savedClip=await clipSpan('library.save', { captureId: c.id }, () => library.save(clipOwner(req,res),{id:c.id,capturedAt:Date.now(),roomId:c.roomId,source:c.source,startedAt:c.startedAt+normalized.sourceOffsetSec*1000,durationSec:trimmed.durationSec,originalDurationSec:normalized.durationSec,trim:result.trim,query:request.query,brief:result.brief,edit:result.edit,answers:result.answers,usage:result.usage},trimmed.media));
+          result.savedClip=await clipSpan('library.save', { captureId: c.id }, () => library.save(clipOwner(req,res),{id:c.id,capturedAt:Date.now(),roomId:c.roomId,source:c.source,startedAt:c.startedAt+normalized.sourceOffsetSec*1000,durationSec:trimmed.durationSec,originalDurationSec:normalized.durationSec,trim:result.trim,query:request.query,title:result.brief?.title,description:result.brief?.description,brief:result.brief,edit:result.edit,answers:result.answers,usage:result.usage},trimmed.media));
           result.selection='saved';
         } else result.selection='below-threshold';
         delete result.media;
@@ -69,7 +69,7 @@ export function createClipRouter(judge = createClipAnalyzer(), normalize = norma
       if(!candidate?.result?.answers)throw new ClipError('Saved analysis is missing its scores.');
       const bytes=await readFile(path.join(importRoot,runId,clip.webm));
       const id=offlineClipId(runId,clipId);
-      const saved=await library.save(clipOwner(req,res),{id,capturedAt:Date.now(),roomId:'imported-video',source:report.sourceName,startedAt:0,durationSec:clip.end-clip.start,originalDurationSec:report.duration,trim:{start:clip.start,end:clip.end},brief:candidate.result.brief,edit:candidate.result.edit,answers:candidate.result.answers,usage:candidate.result.usage},bytes);
+      const saved=await library.save(clipOwner(req,res),{id,capturedAt:Date.now(),roomId:'imported-video',source:report.sourceName,startedAt:0,durationSec:clip.end-clip.start,originalDurationSec:report.duration,trim:{start:clip.start,end:clip.end},title:candidate.result.brief?.title,description:candidate.result.brief?.description,brief:candidate.result.brief,edit:candidate.result.edit,answers:candidate.result.answers,usage:candidate.result.usage},bytes);
       res.json({clip:saved});
     }catch(e){respondError(res,e);}finally{active--;}
   });

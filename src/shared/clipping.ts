@@ -38,6 +38,8 @@ export interface ClipResult {
 }
 export interface AgentInspection { request: unknown; response: unknown; elapsedMs: number; steps?: { agent: 'neon' | 'hydrogen-review'; inspection: AgentInspection }[] }
 export interface ClipBrief {
+  title: string;
+  description: string;
   summary: string;
   intent: string;
   relevant: boolean;
@@ -87,6 +89,9 @@ export interface ClipCapture {
   thresholds: ClipThresholds;
 }
 export interface SavedClip {
+  // Optional for clips saved before descriptive annotations were introduced.
+  title?: string;
+  description?: string;
   query?: string;
   brief?: ClipBrief;
   edit?: ClipEdit;

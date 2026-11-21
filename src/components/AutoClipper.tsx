@@ -12,10 +12,13 @@ function ChoiceBars({ answers }: { answers: ClipAnswers }) {
 }
 function ClipCard({ clip, clipper, onShopClip }: { clip: SavedClip; clipper: Clipper; onShopClip?: (clip: SavedClip) => void }) {
   const [deleting, setDeleting] = useState(false);
-  const category = clip.answers.category;
+  const category = clip.answers.trigger_type || clip.answers.category;
+  const title = clip.title?.trim() || clip.brief?.title?.trim() || (category?.type === 'choice' ? category.choice : 'Highlight');
+  const description = clip.description?.trim() || clip.brief?.description?.trim() || clip.brief?.summary?.trim() || 'No description is available for this older clip.';
   return <article className="ac-clip">
     <video src={clip.url} controls preload="metadata" playsInline />
-    <div className="ac-clip-body"><div className="ac-row"><strong>{category?.type === 'choice' ? category.choice : 'Highlight'}</strong><span className="ac-tag ac-good">Saved</span></div>
+    <div className="ac-clip-body"><div className="ac-row"><h3 className="ac-clip-title">{title}</h3><span className="ac-tag ac-good">Saved</span></div>
+      <p className="ac-clip-description">{description}</p>
       <p className="ac-meta">{new Date(clip.capturedAt).toLocaleString()} · {clip.source} · {clip.roomId}</p>
       <p className="ac-meta font-mono">{clip.durationSec.toFixed(1)}s clip · source {clip.trim.start.toFixed(1)}–{clip.trim.end.toFixed(1)}s</p>
       <details><summary className="ac-meta">Why this moment</summary>{clip.brief && <p className="ac-meta">{clip.brief.summary}</p>}{clip.edit && <p className="ac-meta">{clip.edit.reason}</p>}<div className="ac-mini-scores">{(['worthy', 'arc', 'viral', 'hook'] as const).map(key => <span key={key} title={labels[key]}>{labels[key]} <b>{Math.round((probability(clip.answers, key) ?? 0) * 100)}%</b></span>)}</div></details>

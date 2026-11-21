@@ -137,6 +137,8 @@
 .ac-clip { background:white; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden; }
 .ac-clip video { width:100%; aspect-ratio:16/9; background:#0f172a; }
 .ac-clip-body { padding:16px; }
+.ac-clip-title { min-width:0; font-size:16px; font-weight:700; line-height:1.4; overflow-wrap:anywhere; }
+.ac-clip-description { margin-top:8px; font-size:14px; line-height:1.5; color:#475569; overflow-wrap:anywhere; }
 .ac-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .ac-row strong { text-transform:capitalize; font-weight:500; }
 .ac-tag { font-size:10px; padding:3px 6px; border-radius:5px; background:#f1f5f9; color:#64748b; white-space:nowrap; }
