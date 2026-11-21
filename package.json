@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/utils/streamUtils.test.ts src/utils/audioRelay.test.ts src/server/shopMcp.test.ts"
+    "test": "tsx --test src/utils/streamUtils.test.ts src/utils/audioRelay.test.ts src/server/shopMcp.test.ts src/server/itemDetection.test.ts"
   },
   "dependencies": {
     "@google/genai": "^3.6.1",
