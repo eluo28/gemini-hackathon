@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { createShopRouter } from './src/server/shopRoutes';
 import { getStreamer, saveStreamer } from './src/server/streamerProfiles';
 import express from 'express';
 import http from 'node:http';
@@ -175,6 +176,7 @@ async function startServer() {
     next();
   });
   app.use(express.json({ limit: '256kb' }));
+  app.use('/api/shop', createShopRouter());
 
   app.get('/api/health', (_req, res) => {
     let activeParticipants = 0;

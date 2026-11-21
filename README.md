@@ -54,3 +54,29 @@ creator authentication before a public launch or real gifting.
 
 Gifting remains disabled until Shop MCP recipient checkout is implemented and
 verified. Saving an address does not activate purchases.
+
+## Shop MCP catalog infrastructure
+
+The Express backend calls `https://mcp.shop.com/` directly using Shop's MCP
+protocol. No Shop API key, merchant store, or buyer sign-in is needed for these
+anonymous catalog routes:
+
+- `POST /api/shop/search`: `{ "catalog": { "query": "ceramic mug", "context": { "address_country": "US", "currency": "USD" }, "pagination": { "limit": 3 } } }`
+- `POST /api/shop/lookup`: `{ "catalog": { "ids": ["<public product URL or identifier>"] } }`
+- `POST /api/shop/product`: `{ "catalog": { "id": "<returned product ID>", "selected": [{ "name": "Color", "label": "Blue" }] } }`
+
+Search accepts price, attribute, shop, and shipping-destination filters. Price
+bounds use integer minor units and require `context.currency`. Copy returned IDs,
+URLs, option names, and labels unchanged. Public product URLs only: never send
+private cart, checkout, account, or signed URLs to lookup. This initial API
+supports text search; image matching will be added with the clip-analysis flow.
+
+Responses preserve Shop's structured product data, warnings, and pagination.
+Catalog responses use `Cache-Control: no-store`; do not persist returned listings
+or rehost merchant images. Fetch current data when needed and display source
+images directly. The transport has a 12-second timeout, never automatically
+retries, and does not follow redirects or accept a caller-selected endpoint.
+
+This is catalog infrastructure only. Buyer OAuth, session-owned carts, purchase
+confirmation and completion, and verified creator-recipient shipping remain to
+be implemented. There is no payment endpoint in this change.
